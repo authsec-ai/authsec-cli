@@ -1,0 +1,370 @@
+{
+  "schema": "authsec-cli.scan/v1",
+  "cli_version": "test",
+  "catalogue_version": "2026.11.0",
+  "scanned_at": "2026-11-11T10:00:00Z",
+  "machine": {
+    "id": "m1",
+    "hostname": "dev-laptop",
+    "os": "linux",
+    "arch": "amd64",
+    "user": "dev"
+  },
+  "home": "$ROOT/home/dev",
+  "projects": [
+    "$ROOT/work/payments-api"
+  ],
+  "files_read": [
+    "$ROOT/etc/claude-code/managed-settings.json",
+    "$ROOT/home/dev/.claude.json",
+    "$ROOT/home/dev/.claude/agents/reviewer.md",
+    "$ROOT/home/dev/.claude/commands/ops/deploy.md",
+    "$ROOT/home/dev/.claude/settings.json",
+    "$ROOT/home/dev/.claude/skills/release/SKILL.md",
+    "$ROOT/work/payments-api/.claude/settings.json",
+    "$ROOT/work/payments-api/.claude/settings.local.json",
+    "$ROOT/work/payments-api/.mcp.json"
+  ],
+  "findings": [
+    {
+      "fingerprint": "host:m1:agent:claude-code:$ROOT/home/dev/.claude#Claude Code",
+      "kind": "agent",
+      "tool": "claude-code",
+      "name": "Claude Code",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude",
+      "evidence": "declared",
+      "rule": "claude.presence",
+      "attrs": {
+        "config_files": 6
+      }
+    },
+    {
+      "fingerprint": "host:m1:agent_policy:claude-code:$ROOT/etc/claude-code/managed-settings.json#permissions",
+      "kind": "agent_policy",
+      "tool": "claude-code",
+      "name": "permissions",
+      "scope": "managed",
+      "path": "$ROOT/etc/claude-code/managed-settings.json",
+      "evidence": "declared",
+      "rule": "claude.settings.managed",
+      "attrs": {
+        "deny": [
+          "WebFetch"
+        ],
+        "disable_bypass_permissions_mode": "disable",
+        "env_names": [
+          "CORP_API_KEY"
+        ]
+      },
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_policy:claude-code:$ROOT/home/dev/.claude.json#allowed tools@$ROOT/work/payments-api",
+      "kind": "agent_policy",
+      "tool": "claude-code",
+      "name": "allowed tools",
+      "scope": "local",
+      "path": "$ROOT/home/dev/.claude.json",
+      "project": "$ROOT/work/payments-api",
+      "evidence": "declared",
+      "rule": "claude.state",
+      "attrs": {
+        "allow": [
+          "Bash"
+        ]
+      },
+      "signals": [
+        {
+          "id": "auto_approve_shell",
+          "reason": "allow rule \"Bash\" runs any shell command without asking"
+        },
+        {
+          "id": "broad_allow",
+          "reason": "allow rule \"Bash\" pre-approves the whole tool"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_policy:claude-code:$ROOT/home/dev/.claude/settings.json#permissions",
+      "kind": "agent_policy",
+      "tool": "claude-code",
+      "name": "permissions",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude/settings.json",
+      "evidence": "declared",
+      "rule": "claude.settings.user",
+      "attrs": {
+        "allow": [
+          "Bash(git status:*)",
+          "Bash(curl -H \"Authorization: Bearer <redacted>\" https://api.example.com/x)",
+          "WebFetch"
+        ],
+        "api_key_helper": true,
+        "default_mode": "acceptEdits",
+        "deny": [
+          "Bash(rm -rf:*)"
+        ],
+        "env_names": [
+          "LOG_LEVEL",
+          "OPENAI_API_KEY"
+        ]
+      },
+      "signals": [
+        {
+          "id": "broad_allow",
+          "reason": "allow rule \"WebFetch\" pre-approves the whole tool"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_policy:claude-code:$ROOT/work/payments-api/.claude/settings.json#permissions@$ROOT/work/payments-api",
+      "kind": "agent_policy",
+      "tool": "claude-code",
+      "name": "permissions",
+      "scope": "project",
+      "path": "$ROOT/work/payments-api/.claude/settings.json",
+      "project": "$ROOT/work/payments-api",
+      "evidence": "declared",
+      "rule": "claude.settings.project",
+      "attrs": {
+        "default_mode": "bypassPermissions"
+      },
+      "signals": [
+        {
+          "id": "auto_approve_shell",
+          "reason": "defaultMode is bypassPermissions: every tool, shell included, runs without asking"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_extension:claude-code:$ROOT/home/dev/.claude/agents/reviewer.md#sub_agent reviewer",
+      "kind": "agent_extension",
+      "tool": "claude-code",
+      "name": "sub_agent reviewer",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude/agents/reviewer.md",
+      "evidence": "declared",
+      "rule": "claude.agents.user",
+      "attrs": {
+        "model": "sonnet",
+        "tools": [
+          "Read",
+          "Grep"
+        ],
+        "type": "sub_agent"
+      },
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_extension:claude-code:$ROOT/home/dev/.claude/commands/ops/deploy.md#command ops/deploy",
+      "kind": "agent_extension",
+      "tool": "claude-code",
+      "name": "command ops/deploy",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude/commands/ops/deploy.md",
+      "evidence": "declared",
+      "rule": "claude.commands.user",
+      "attrs": {
+        "allowed_tools": [
+          "Bash(kubectl apply:*)"
+        ],
+        "type": "command"
+      },
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_extension:claude-code:$ROOT/home/dev/.claude/settings.json#hook PreToolUse[Bash]",
+      "kind": "agent_extension",
+      "tool": "claude-code",
+      "name": "hook PreToolUse[Bash]",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude/settings.json",
+      "evidence": "declared",
+      "rule": "claude.settings.user",
+      "attrs": {
+        "command": "PGPASSWORD=<redacted> psql -c 'select 1'",
+        "event": "PreToolUse",
+        "hook_type": "command",
+        "matcher": "Bash",
+        "type": "hook"
+      },
+      "signals": [
+        {
+          "id": "hook_runs_command",
+          "reason": "runs \"PGPASSWORD=<redacted> psql -c 'select 1'\" on PreToolUse"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:agent_extension:claude-code:$ROOT/home/dev/.claude/skills/release/SKILL.md#skill release",
+      "kind": "agent_extension",
+      "tool": "claude-code",
+      "name": "skill release",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude/skills/release/SKILL.md",
+      "evidence": "declared",
+      "rule": "claude.skills.user",
+      "attrs": {
+        "allowed_tools": [
+          "Bash",
+          "Read"
+        ],
+        "description": "Cut a release",
+        "type": "skill"
+      },
+      "signals": [
+        {
+          "id": "auto_approve_shell",
+          "reason": "pre-approves \"Bash\" while it is active"
+        },
+        {
+          "id": "broad_allow",
+          "reason": "pre-approves \"Bash\" while it is active"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:mcp_server:claude-code:$ROOT/home/dev/.claude.json#github",
+      "kind": "mcp_server",
+      "tool": "claude-code",
+      "name": "github",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude.json",
+      "evidence": "declared",
+      "rule": "claude.state",
+      "attrs": {
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-github"
+        ],
+        "command": "npx",
+        "env_names": [
+          "GITHUB_PERSONAL_ACCESS_TOKEN"
+        ],
+        "launcher": "npx",
+        "package": "@modelcontextprotocol/server-github",
+        "pinned": false,
+        "transport": "stdio"
+      },
+      "signals": [
+        {
+          "id": "mcp_unpinned",
+          "reason": "npx runs @modelcontextprotocol/server-github without a pinned version: each start may fetch different code"
+        },
+        {
+          "id": "secret_in_mcp_env",
+          "reason": "given GITHUB_PERSONAL_ACCESS_TOKEN"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:mcp_server:claude-code:$ROOT/home/dev/.claude.json#remote",
+      "kind": "mcp_server",
+      "tool": "claude-code",
+      "name": "remote",
+      "scope": "user",
+      "path": "$ROOT/home/dev/.claude.json",
+      "evidence": "declared",
+      "rule": "claude.state",
+      "attrs": {
+        "header_names": [
+          "Authorization"
+        ],
+        "transport": "http",
+        "url": "https://mcp.example.com/mcp?region=eu&token=<redacted>"
+      },
+      "signals": [
+        {
+          "id": "secret_in_mcp_env",
+          "reason": "given Authorization"
+        }
+      ],
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:mcp_server:claude-code:$ROOT/home/dev/.claude.json#db@$ROOT/work/payments-api",
+      "kind": "mcp_server",
+      "tool": "claude-code",
+      "name": "db",
+      "scope": "local",
+      "path": "$ROOT/home/dev/.claude.json",
+      "project": "$ROOT/work/payments-api",
+      "evidence": "declared",
+      "rule": "claude.state",
+      "attrs": {
+        "args": [
+          "postgres-mcp==0.3.0",
+          "--dsn",
+          "<redacted>"
+        ],
+        "command": "uvx",
+        "launcher": "uvx",
+        "package": "postgres-mcp==0.3.0",
+        "pinned": true,
+        "transport": "stdio"
+      },
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:mcp_server:claude-code:$ROOT/work/payments-api/.mcp.json#fs@$ROOT/work/payments-api",
+      "kind": "mcp_server",
+      "tool": "claude-code",
+      "name": "fs",
+      "scope": "project",
+      "path": "$ROOT/work/payments-api/.mcp.json",
+      "project": "$ROOT/work/payments-api",
+      "evidence": "declared",
+      "rule": "claude.mcp.project",
+      "attrs": {
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem@2025.7.1",
+          "."
+        ],
+        "command": "npx",
+        "launcher": "npx",
+        "package": "@modelcontextprotocol/server-filesystem@2025.7.1",
+        "pinned": true,
+        "transport": "stdio"
+      },
+      "file_sha256": "…"
+    },
+    {
+      "fingerprint": "host:m1:unreadable:claude-code:$ROOT/work/payments-api/.claude/settings.local.json#settings.local.json@$ROOT/work/payments-api",
+      "kind": "unreadable",
+      "tool": "claude-code",
+      "name": "settings.local.json",
+      "scope": "local",
+      "path": "$ROOT/work/payments-api/.claude/settings.local.json",
+      "project": "$ROOT/work/payments-api",
+      "evidence": "declared",
+      "rule": "claude.settings.local",
+      "attrs": {
+        "error": "not valid JSON: unexpected EOF"
+      }
+    }
+  ],
+  "summary": {
+    "findings": {
+      "agent": 1,
+      "agent_extension": 4,
+      "agent_policy": 4,
+      "mcp_server": 4,
+      "unreadable": 1
+    },
+    "signals": {
+      "auto_approve_shell": 3,
+      "broad_allow": 3,
+      "hook_runs_command": 1,
+      "mcp_unpinned": 1,
+      "secret_in_mcp_env": 2
+    }
+  }
+}
