@@ -1,91 +1,28 @@
-# authsec-cli: build plan
+# authsec-cli (AuthSec Agent Kit): 7-day plan
 
-The order of work for SPEC.md. Each milestone ends with something that runs.
+Every story in the sheet works end to end by day 7. Depth is cut where noted.
 
-## Ground rules
+| Day | Build | Demo at end of day |
+|---|---|---|
+| 0 ✅ | Config scan: Claude Code settings, MCP, hooks, skills | `authsec-cli scan` |
+| 1 | Running agents: process list, connections, signatures, process tree. Configs for Codex, Cursor, Gemini, Claude Desktop | `authsec-cli agents` |
+| 2 | eBPF sensor (exec, connect, file open for agent PIDs), `daemon` with JSONL event log, systemd unit, `access` | `sudo authsec-cli daemon`, then `authsec-cli access claude-code` |
+| 3 | Policy YAML: schema, `policy generate` into `./policies/`, `policy check`, OpenShell export | generate, `vi`, check |
+| 4 | Enforcement: agent cgroup + nftables network allow list, quarantine/release (cgroup freeze), Claude Code PreToolUse hook for commands, `run --enforce` through OpenShell | blocked host fails, quarantine freezes |
+| 5 | Detections: ARTEX and offensive agent. SIEM: syslog (CEF) and webhook. Cloud mode from `.env`: AWS Bedrock agents and AgentCore runtimes, Azure AI Foundry/OpenAI | ARTEX in Docker is detected; `--cloud agents` |
+| 6 | Control plane: connect with an ingest token from the console, push agents and events to discovery, policy and action pull (quarantine, block) | the machine shows in the console |
+| 7 | Console screens (agents, access, policy, quarantine and block actions), release build, demo script, fixes | full demo |
 
-- Go 1.23 (the same as iga-agent). Module `github.com/authsec-ai/authsec-cli`.
-- Few dependencies: cobra, BurntSushi/toml, yaml.v3. JSONC and INI parsing are written in-house.
-- Secret values never leave the parser. Every collector has a test that fails if a fixture's secret shows up in the output.
-- Only catalogue paths are opened. Files are capped at 1 MiB.
-- Backend changes go to the `authsec` repo on a feature branch, never straight to `authsec-staging`.
+## Cut for the week
 
-## Layout
+- Kernel monitoring on Linux only. macOS and Windows use process polling.
+- Network enforcement uses nftables matched on the agent's cgroup (eBPF connect hooks come later).
+- File restrictions only through `run --enforce` (OpenShell). A running process cannot be confined.
+- Cloud: AWS and Azure discovery. Cloud enforcement reuses the console's access policies.
+- Compliance tags: a fixed OWASP Agentic Top 10 mapping.
+- No package repos: one install script and release binaries.
 
-```text
-cmd/authsec-cli/        main
-internal/cli/           cobra commands
-internal/catalogue/     paths per tool and OS, with a version
-internal/collect/       one collector per tool or identity source
-internal/parse/         JSONC, TOML, YAML, INI and the redactor
-internal/finding/       Finding, fingerprint, machine id
-internal/rules/         risk signals
-internal/report/        table, JSON, SARIF, Markdown
-internal/auth/          device login and token storage   (M4)
-internal/push/          registration, sightings, resync  (M4)
-testdata/               redacted fixture homes, one per tool
-```
+## Risks
 
-## M1: scan Claude Code (week 1)
-
-1. Repo scaffold: go.mod, Makefile (`build test lint`), `version`, CI for Linux, macOS and Windows.
-2. `finding`: the Finding type, a machine id (sha256 of the OS machine id) and fingerprints.
-3. `parse`: a JSONC reader and a redactor (keys kept, values become `<redacted:len>`).
-4. `catalogue`: Claude Code paths (`~/.claude/settings.json`, `~/.claude.json`, and in each project `.claude/settings*.json` and `.mcp.json`).
-5. Claude Code collector: agent, policy (allow, deny, ask, defaultMode), hooks, skills, sub-agents, commands, MCP servers.
-6. `scan` with table and `--json` output, `--home` and `--project`.
-7. Tests: fixture home → golden JSON; a planted key never appears in the output.
-
-**Done when:** `authsec-cli scan` on this laptop lists Claude Code and everything it is allowed to do.
-
-## M2: other agents (week 2)
-
-1. Codex (`~/.codex/config.toml`: approval_policy, sandbox_mode, mcp_servers).
-2. VS Code / Copilot (user `settings.json`, `mcp.json`, `.vscode/mcp.json`).
-3. Cursor, Gemini CLI, Windsurf and Claude Desktop (MCP and settings).
-4. Project files: `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`.
-5. Paths per OS (macOS `Library/Application Support`, Windows `%APPDATA%`), each checked against the tool's docs.
-
-**Done when:** each tool has a fixture test, and `authsec-cli catalogue` prints every path.
-
-## M3: identities, risks, CI (week 3)
-
-1. AWS (`config` and `credentials`: profiles, role_arn, sso account; key values never read).
-2. Kubernetes (contexts, server URL, user, auth type), Azure, gcloud, `gh` and Docker.
-3. Secret names: env var names and `.env` files in projects.
-4. Rules: the six risk signals, plus `--prod` patterns.
-5. `--fail-on` with exit codes, SARIF and Markdown output.
-
-**Done when:** `scan --sarif --fail-on auto_approve_shell` works as a CI gate.
-
-## M4: connect to AuthSec (weeks 4–5)
-
-Backend (authsec repo):
-
-1. Migration: the `cli_device_authorizations` table.
-2. `POST /authsec/discovery/cli/device` and `/device/token`, unauthenticated and rate-limited.
-3. `GET` and `POST /authsec/discovery/cli/device/:user_code` for approval, needing `discovery:admin`. Approving creates the `vm_sensor` source.
-4. The token is minted when the CLI collects it, bound to that source, and returned once with the `workspace_id` and source id.
-5. Resync for `vm_sensor`: today a manifest needs namespaces (k8s). Decide what a machine sends instead.
-6. Tests: RFC 8628 states, expired and reused codes, cross-workspace isolation.
-
-CLI:
-
-7. `login`, `logout`, `status`; the token goes in the OS keychain (or a 0600 file).
-8. `push`: registration, one sighting per finding, resync; `--dry-run`.
-9. `doctor`.
-
-**Done when:** `login && push` makes this laptop show up in the console's Discovery.
-
-## M5: console (week 6)
-
-1. Approve page `/iga/connect/machine`.
-2. Connections › Add › Machine: two pre-filled lines, then wait for the machine.
-3. Discovery: a Machines provider (`vm_sensor`) and a finding detail view.
-
-## M6: release and correlation (week 7)
-
-1. GoReleaser: signed builds, checksums, SBOM; install script; Homebrew tap.
-2. Link machine identities to graph nodes (AWS role ARN, kube server URL, Azure subscription).
-
-**Done when:** `curl … | sh` installs a release, and the graph shows which machines' agents reach prod.
+- Day 6–7 needs backend and UI changes. If they slip, the console shows machines and agents through existing discovery, and policies and actions stay CLI-only.
+- The ARTEX signatures come from its README. Day 5 checks them against a real run.

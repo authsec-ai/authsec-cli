@@ -72,6 +72,10 @@ func policy(f *finding.Finding) {
 	if skip, _ := f.Attrs["skip_dangerous_mode_prompt"].(bool); skip {
 		f.AddSignal(AutoApproveShell, "bypass-permissions mode was accepted on this machine (skipDangerousModePermissionPrompt): sessions can run every tool without asking")
 	}
+	if on, _ := f.Attrs["auto_approve"].(bool); on {
+		reason, _ := f.Attrs["auto_approve_reason"].(string)
+		f.AddSignal(AutoApproveShell, reason)
+	}
 	allow := strs(f.Attrs["allow"])
 	if shell := filter(allow, isShellAll); len(shell) > 0 {
 		f.AddSignal(AutoApproveShell, fmt.Sprintf("allow rule %s runs any shell command without asking", quoteList(shell)))
@@ -112,7 +116,8 @@ func mcp(f *finding.Finding) {
 // isShellAll: a rule that lets the agent run any shell command.
 func isShellAll(rule string) bool {
 	switch strings.ReplaceAll(rule, " ", "") {
-	case "*", "Bash", "Bash(*)", "Bash(:*)", "Bash(**)", "Bash(*:*)", "PowerShell", "PowerShell(*)":
+	case "*", "Bash", "Bash(*)", "Bash(:*)", "Bash(**)", "Bash(*:*)", "PowerShell", "PowerShell(*)",
+		"Shell", "Shell(*)", "Shell(**)", "run_shell_command", "ShellTool", "Terminal(/.*/)", "Terminal(*)":
 		return true
 	}
 	return false

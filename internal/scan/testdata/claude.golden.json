@@ -1,7 +1,7 @@
 {
   "schema": "authsec-cli.scan/v1",
   "cli_version": "test",
-  "catalogue_version": "2026.11.0",
+  "catalogue_version": "2026.11.1",
   "scanned_at": "2026-11-11T10:00:00Z",
   "machine": {
     "id": "m1",

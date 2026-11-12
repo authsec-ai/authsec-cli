@@ -244,8 +244,10 @@ func mcpAttrs(s map[string]any) map[string]any {
 	command := parse.String(s, "command")
 	args := parse.Args(parse.Strings(s, "args"))
 	rawURL := parse.String(s, "url")
-	if rawURL == "" {
-		rawURL = parse.String(s, "serverUrl")
+	for _, k := range []string{"serverUrl", "httpUrl"} { // Windsurf, Gemini CLI
+		if rawURL == "" {
+			rawURL = parse.String(s, k)
+		}
 	}
 	transport := parse.String(s, "type")
 	if transport == "" {

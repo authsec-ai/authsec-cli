@@ -50,6 +50,10 @@ func Table(w io.Writer, r *Report, displayName func(tool string) string) error {
 	}
 	for _, tool := range tools {
 		fs := byTool[tool]
+		if len(fs) == 1 && fs[0].Kind == finding.Agent {
+			fmt.Fprintf(w, "%s  (configured, no settings that change what it may do)\n\n", displayName(tool))
+			continue
+		}
 		fmt.Fprintf(w, "%s  (%s)\n", displayName(tool), counts(fs))
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "  KIND\tNAME\tSCOPE\tWHERE\tSIGNALS")

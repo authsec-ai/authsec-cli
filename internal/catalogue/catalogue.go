@@ -11,7 +11,7 @@ import (
 
 // Version is the coverage claim a report carries. Bump it with every change
 // to Entries.
-const Version = "2026.11.0"
+const Version = "2026.11.1"
 
 // Env holds the directories path templates expand to. Tests point every one
 // of them into a fixture tree.
@@ -124,5 +124,36 @@ func Entries() []Entry {
 		{ID: "claude.skills.project", Tool: "claude-code", Scope: "project", Dir: true, What: "skills (SKILL.md front matter)", Paths: []string{"{project}/.claude/skills"}},
 		{ID: "claude.agents.project", Tool: "claude-code", Scope: "project", Dir: true, What: "sub-agents (front matter)", Paths: []string{"{project}/.claude/agents"}},
 		{ID: "claude.commands.project", Tool: "claude-code", Scope: "project", Dir: true, What: "slash commands (front matter)", Paths: []string{"{project}/.claude/commands"}},
+
+		// Codex: https://github.com/openai/codex/blob/main/docs/config.md
+		{ID: "codex.config.user", Tool: "codex", Scope: "user", What: "approval_policy, sandbox_mode, profiles, MCP servers, trusted projects", Paths: []string{"{home}/.codex/config.toml"}},
+		{ID: "codex.config.project", Tool: "codex", Scope: "project", What: "approval_policy, sandbox_mode, MCP servers", Paths: []string{"{project}/.codex/config.toml"}},
+
+		// VS Code (Copilot agent mode, MCP): https://code.visualstudio.com/docs/copilot/chat/mcp-servers
+		{ID: "vscode.settings.user", Tool: "vscode", Scope: "user", What: "chat tool auto-approve settings only", OS: []string{"linux", "windows"}, Paths: []string{"{config}/Code/User/settings.json", "{appdata}/Code/User/settings.json"}},
+		{ID: "vscode.settings.user.darwin", Tool: "vscode", Scope: "user", What: "chat tool auto-approve settings only", OS: []string{"darwin"}, Paths: []string{"{home}/Library/Application Support/Code/User/settings.json"}},
+		{ID: "vscode.mcp.user", Tool: "vscode", Scope: "user", What: "MCP servers", OS: []string{"linux", "windows"}, Paths: []string{"{config}/Code/User/mcp.json", "{appdata}/Code/User/mcp.json"}},
+		{ID: "vscode.mcp.user.darwin", Tool: "vscode", Scope: "user", What: "MCP servers", OS: []string{"darwin"}, Paths: []string{"{home}/Library/Application Support/Code/User/mcp.json"}},
+		{ID: "vscode.mcp.project", Tool: "vscode", Scope: "project", What: "MCP servers (shared with the team)", Paths: []string{"{project}/.vscode/mcp.json"}},
+
+		// Cursor: https://docs.cursor.com/context/model-context-protocol, CLI permissions
+		{ID: "cursor.mcp.user", Tool: "cursor", Scope: "user", What: "MCP servers", Paths: []string{"{home}/.cursor/mcp.json"}},
+		{ID: "cursor.cli.user", Tool: "cursor", Scope: "user", What: "Cursor CLI allow and deny rules", Paths: []string{"{home}/.cursor/cli-config.json"}},
+		{ID: "cursor.mcp.project", Tool: "cursor", Scope: "project", What: "MCP servers (shared with the team)", Paths: []string{"{project}/.cursor/mcp.json"}},
+		{ID: "cursor.cli.project", Tool: "cursor", Scope: "project", What: "Cursor CLI allow and deny rules", Paths: []string{"{project}/.cursor/cli.json"}},
+
+		// Gemini CLI: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/configuration.md
+		{ID: "gemini.settings.user", Tool: "gemini-cli", Scope: "user", What: "tool allow/exclude lists, approval mode, MCP servers", Paths: []string{"{home}/.gemini/settings.json"}},
+		{ID: "gemini.settings.project", Tool: "gemini-cli", Scope: "project", What: "tool allow/exclude lists, approval mode, MCP servers", Paths: []string{"{project}/.gemini/settings.json"}},
+		{ID: "gemini.settings.managed", Tool: "gemini-cli", Scope: "managed", What: "administrator settings", OS: []string{"linux"}, Paths: []string{"/etc/gemini-cli/settings.json"}},
+		{ID: "gemini.settings.managed.darwin", Tool: "gemini-cli", Scope: "managed", What: "administrator settings", OS: []string{"darwin"}, Paths: []string{"/Library/Application Support/GeminiCli/settings.json"}},
+		{ID: "gemini.settings.managed.windows", Tool: "gemini-cli", Scope: "managed", What: "administrator settings", OS: []string{"windows"}, Paths: []string{"{programdata}/gemini-cli/settings.json"}},
+
+		// Claude Desktop: https://modelcontextprotocol.io/quickstart/user
+		{ID: "claude-desktop.config", Tool: "claude-desktop", Scope: "user", What: "MCP servers", OS: []string{"linux", "windows"}, Paths: []string{"{config}/Claude/claude_desktop_config.json", "{appdata}/Claude/claude_desktop_config.json"}},
+		{ID: "claude-desktop.config.darwin", Tool: "claude-desktop", Scope: "user", What: "MCP servers", OS: []string{"darwin"}, Paths: []string{"{home}/Library/Application Support/Claude/claude_desktop_config.json"}},
+
+		// Windsurf: https://docs.windsurf.com/windsurf/cascade/mcp
+		{ID: "windsurf.mcp.user", Tool: "windsurf", Scope: "user", What: "MCP servers", Paths: []string{"{home}/.codeium/windsurf/mcp_config.json"}},
 	}
 }

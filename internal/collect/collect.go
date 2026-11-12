@@ -4,6 +4,7 @@
 package collect
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -41,7 +42,7 @@ type ProjectLister interface {
 
 // All is every collector, in display order.
 func All() []Collector {
-	return []Collector{Claude{}}
+	return []Collector{Claude{}, Codex{}, vscode, cursor, gemini, claudeDesktop, windsurf}
 }
 
 // DisplayName returns the human name of a tool id.
@@ -86,6 +87,9 @@ func readJSONC(env *Env, out *Out, tool, rule, scope, path, project string) (map
 			out.Unreadable(tool, rule, scope, path, project, err)
 		}
 		return nil, nil, false
+	}
+	if len(bytes.TrimSpace(f.Data)) == 0 {
+		return map[string]any{}, f, true // an empty file is an empty configuration (VS Code creates them)
 	}
 	m, err := parse.JSONC(f.Data)
 	if err != nil {
