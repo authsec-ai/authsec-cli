@@ -109,3 +109,12 @@ func lastElem(p string) string {
 	}
 	return p
 }
+
+func get(pid int) (*Process, bool) {
+	s, err := take()
+	if err != nil {
+		return nil, false
+	}
+	p, ok := s.Procs[pid]
+	return p, ok
+}

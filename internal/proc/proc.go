@@ -47,6 +47,10 @@ type Snapshot struct {
 // Take reads the process table of this machine.
 func Take() (*Snapshot, error) { return take() }
 
+// Get reads one process; ok is false when it has exited. On macOS and
+// Windows it takes a whole snapshot.
+func Get(pid int) (*Process, bool) { return get(pid) }
+
 // Children returns the direct children of pid, sorted by pid.
 func (s *Snapshot) Children(pid int) []*Process {
 	var out []*Process

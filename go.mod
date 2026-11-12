@@ -4,7 +4,10 @@ go 1.23
 
 require (
 	github.com/BurntSushi/toml v1.4.0
+	github.com/cilium/ebpf v0.17.3
 	github.com/spf13/cobra v1.8.0
+	golang.org/x/net v0.33.0
+	golang.org/x/sys v0.30.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

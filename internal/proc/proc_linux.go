@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,31 +34,50 @@ func readProc(root string) (*Snapshot, error) {
 		if err != nil || !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(root, e.Name())
-		p, ok := readStat(dir, pid, boot)
+		p, partial, ok := readProcess(filepath.Join(root, e.Name()), pid, boot, users, sockets)
 		if !ok {
 			continue // exited while we read
 		}
-		p.UID = readUID(dir)
-		if name, ok := users[p.UID]; ok {
-			p.User = name
-		} else if u, err := user.LookupId(strconv.Itoa(p.UID)); err == nil {
-			p.User, users[p.UID] = u.Username, u.Username
-		} else {
-			users[p.UID] = ""
+		if partial {
+			s.Partial = true
 		}
-		if b, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
-			p.Args = splitNUL(b)
-		}
-		if exe, err := os.Readlink(filepath.Join(dir, "exe")); err == nil {
-			p.Exe = strings.TrimSuffix(exe, " (deleted)")
-		} else if !os.IsNotExist(err) && len(p.Args) > 0 {
-			s.Partial = true // another user's process: exe, env and fds are hidden
-		}
-		if b, err := os.ReadFile(filepath.Join(dir, "environ")); err == nil {
-			p.EnvNames = envNames(b)
-			clear(b)
-		}
+		s.Procs[pid] = p
+	}
+	for _, f := range []string{"net/tcp", "net/tcp6"} {
+		s.Conns = append(s.Conns, readNetTCP(filepath.Join(root, f), sockets)...)
+	}
+	return s, nil
+}
+
+// readProcess reads one /proc/<pid> directory. sockets, if not nil, collects
+// the process's socket inodes. partial is true when the process belongs to
+// another user and its exe, environment and fds are hidden.
+func readProcess(dir string, pid int, boot time.Time, users map[int]string, sockets map[string]int) (p *Process, partial, ok bool) {
+	p, ok = readStat(dir, pid, boot)
+	if !ok {
+		return nil, false, false
+	}
+	p.UID = readUID(dir)
+	if name, ok := users[p.UID]; ok {
+		p.User = name
+	} else if u, err := user.LookupId(strconv.Itoa(p.UID)); err == nil {
+		p.User, users[p.UID] = u.Username, u.Username
+	} else {
+		users[p.UID] = ""
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
+		p.Args = splitNUL(b)
+	}
+	if exe, err := os.Readlink(filepath.Join(dir, "exe")); err == nil {
+		p.Exe = strings.TrimSuffix(exe, " (deleted)")
+	} else if !os.IsNotExist(err) && len(p.Args) > 0 {
+		partial = true
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "environ")); err == nil {
+		p.EnvNames = envNames(b)
+		clear(b)
+	}
+	if sockets != nil {
 		if fds, err := os.ReadDir(filepath.Join(dir, "fd")); err == nil {
 			for _, fd := range fds {
 				l, err := os.Readlink(filepath.Join(dir, "fd", fd.Name()))
@@ -66,12 +86,25 @@ func readProc(root string) (*Snapshot, error) {
 				}
 			}
 		}
-		s.Procs[pid] = p
 	}
-	for _, f := range []string{"net/tcp", "net/tcp6"} {
-		s.Conns = append(s.Conns, readNetTCP(filepath.Join(root, f), sockets)...)
+	return p, partial, true
+}
+
+var (
+	getMu    sync.Mutex
+	getUsers = map[int]string{}
+	getBoot  time.Time
+)
+
+// get reads one process from /proc.
+func get(pid int) (*Process, bool) {
+	getMu.Lock()
+	defer getMu.Unlock()
+	if getBoot.IsZero() {
+		getBoot = bootTime("/proc")
 	}
-	return s, nil
+	p, _, ok := readProcess(filepath.Join("/proc", strconv.Itoa(pid)), pid, getBoot, getUsers, nil)
+	return p, ok
 }
 
 // readStat parses /proc/<pid>/stat: comm is in parentheses and may contain

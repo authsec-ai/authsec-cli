@@ -78,3 +78,12 @@ func hostPort(s string) (net.IP, int) {
 	port, _ := strconv.Atoi(p)
 	return net.ParseIP(strings.Trim(h, "[]")), port
 }
+
+func get(pid int) (*Process, bool) {
+	s, err := take()
+	if err != nil {
+		return nil, false
+	}
+	p, ok := s.Procs[pid]
+	return p, ok
+}

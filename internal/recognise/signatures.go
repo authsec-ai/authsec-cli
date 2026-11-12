@@ -173,6 +173,15 @@ func match(exe, comm string, args []string) (*Signature, string) {
 	return nil, ""
 }
 
+// Match returns the signature a process matches and why, or nil.
+func Match(exe, comm string, args []string) (*Signature, string) { return match(exe, comm, args) }
+
+// IsBrowser reports whether a binary is a web browser.
+func IsBrowser(name string) bool { return browsers[baseName(name)] }
+
+// ScrubArgs removes credentials from a command line and shortens it.
+func ScrubArgs(args []string) []string { return scrubArgs(args) }
+
 // IsLLMHostName reports whether a DNS name is an LLM API endpoint.
 func IsLLMHostName(name string) bool {
 	name = strings.TrimSuffix(strings.ToLower(name), ".")
