@@ -5,6 +5,7 @@ it actually does: the programs it runs, the files it opens and where it
 connects.
 
 ```text
+curl -fsSL https://github.com/authsec-ai/authsec-cli/releases/latest/download/install.sh | sudo sh
 authsec-cli agents                    # AI agents running now (and installed)
 authsec-cli agents --watch 5s         # print agents as they start and stop
 authsec-cli scan                      # agent settings, MCP servers, risks (offline)
@@ -86,6 +87,7 @@ by name; command lines, URLs and arguments are scrubbed. The event log is 0600.
 
 ```text
 make build      # bin/authsec-cli
+make release    # dist/: binaries, install.sh, SHA256SUMS (VERSION=v0.7.0)
 make test
 make lint
 make golden     # after an intended change to the report; review the diff
