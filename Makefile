@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -s -w -X github.com/authsec-ai/authsec-cli/internal/cli.Version=$(VERSION) -X github.com/authsec-ai/authsec-cli/internal/cli.Commit=$(COMMIT)
 
-.PHONY: build test vet lint golden cross release clean bpf ebpf-test
+.PHONY: build test vet lint golden cross release collector-image clean bpf ebpf-test
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/authsec-cli ./cmd/authsec-cli
@@ -37,6 +37,13 @@ cross:
 	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/authsec-cli-linux-arm64 ./cmd/authsec-cli
 	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/authsec-cli-darwin-arm64 ./cmd/authsec-cli
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/authsec-cli-windows-amd64.exe ./cmd/authsec-cli
+
+# The host collector image (authsec-local), from the linux/amd64 binary.
+COLLECTOR_IMAGE ?= authsec/iga-host-collector
+collector-image:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o build/collector/authsec-cli ./cmd/authsec-cli
+	cp build/collector.Dockerfile build/collector/Dockerfile
+	docker build -t $(COLLECTOR_IMAGE):$(VERSION) -t $(COLLECTOR_IMAGE):latest build/collector
 
 # Release files in dist/: the binaries, install.sh and SHA256SUMS, uploaded
 # as they are to a release (install.sh downloads from the same place).

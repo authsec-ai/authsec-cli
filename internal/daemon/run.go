@@ -47,11 +47,21 @@ type Options struct {
 	SIEM []Sink
 	// Tee receives every record (SIEM forwarding, control plane).
 	Tee func(events.Record)
-	// Link connects the machine to the AuthSec console (nil: not connected).
-	// Its policies are written to ConsolePolicyDir and win over a local
-	// policy for the same agent.
-	Link             *link.Link
+	// Link connects the machine to the AuthSec console (nil: not connected):
+	// the console link (internal/link) or the v2 collector
+	// (internal/collector). Its policies are written to ConsolePolicyDir and
+	// win over a local policy for the same agent.
+	Link             Uplink
 	ConsolePolicyDir string
+}
+
+// Uplink is a connection to a control plane. It receives every record and
+// the running agents, and hands the loop work that touches the engine.
+type Uplink interface {
+	Tee(events.Record)
+	SetAgents(agents []events.Agent, runtime map[string]any)
+	Commands() <-chan link.Command
+	Run(ctx context.Context, log func(events.Record))
 }
 
 // Sink forwards records (internal/siem).
@@ -160,7 +170,9 @@ func Run(ctx context.Context, opt Options) error {
 			enforcing += " (blocking needs root)"
 		default:
 			cg := enforce.Cgroups{Root: opt.CgroupRoot}
-			if err := cg.Available(); err != nil {
+			if ns := foreignNamespaces(); ns != "" {
+				enforcing += " (" + ns + ")"
+			} else if err := cg.Available(); err != nil {
 				enforcing += " (" + err.Error() + ")"
 			} else if err := (enforce.NFT{}).Remove(); err != nil {
 				enforcing += " (nftables: " + err.Error() + ")"
@@ -573,4 +585,23 @@ func homeOf(name string) string {
 	}
 	h, _ := os.UserHomeDir()
 	return h
+}
+
+// foreignNamespaces says why rules made here would not reach the machine's
+// agents: a container that sees the host's processes (--pid host) but has
+// its own network or cgroup namespace. "" when they would.
+func foreignNamespaces() string {
+	var differ []string
+	for _, ns := range []string{"net", "cgroup"} {
+		host, err1 := os.Readlink("/proc/1/ns/" + ns)
+		self, err2 := os.Readlink("/proc/self/ns/" + ns)
+		if err1 == nil && err2 == nil && host != self {
+			differ = append(differ, ns)
+		}
+	}
+	if len(differ) == 0 {
+		return ""
+	}
+	return "this process has its own " + strings.Join(differ, " and ") +
+		" namespace, so it cannot block the machine's agents: run the container with --network host --cgroupns host"
 }

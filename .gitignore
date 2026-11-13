@@ -2,3 +2,4 @@
 *.test
 *.out
 dist/
+build/collector/

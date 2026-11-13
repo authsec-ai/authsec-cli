@@ -71,6 +71,7 @@ func Start() (Sensor, error) {
 		return nil, fmt.Errorf("%w: kernel has no BTF (/sys/kernel/btf/vmlinux)", ErrUnsupported)
 	}
 	_ = rlimit.RemoveMemlock() // kernels before 5.11 account BPF memory to memlock
+	ensureTracefs()
 
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
 	if err != nil {
@@ -333,3 +334,17 @@ func trimDot(s string) string {
 // OpensDirectory reports whether open flags open a directory (a listing,
 // not a file access).
 func OpensDirectory(flags int32) bool { return flags&unix.O_DIRECTORY != 0 }
+
+// ensureTracefs mounts tracefs when it is missing, as in a privileged
+// container: tracepoints are attached through it. A failure is left to the
+// attach, which reports it.
+func ensureTracefs() {
+	for _, d := range []string{"/sys/kernel/tracing", "/sys/kernel/debug/tracing"} {
+		if _, err := os.Stat(d + "/events"); err == nil {
+			return
+		}
+	}
+	if err := os.MkdirAll("/sys/kernel/tracing", 0o700); err == nil {
+		_ = unix.Mount("tracefs", "/sys/kernel/tracing", "tracefs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "")
+	}
+}

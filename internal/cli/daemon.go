@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/authsec-ai/authsec-cli/internal/collector"
 	"github.com/authsec-ai/authsec-cli/internal/daemon"
 	"github.com/authsec-ai/authsec-cli/internal/events"
 	"github.com/authsec-ai/authsec-cli/internal/link"
@@ -33,6 +34,7 @@ func newDaemonCmd() *cobra.Command {
 		logPath, policies, siemTokenEnv string
 		noEBPF, noEnforce, noDetect     bool
 		noConnect                       bool
+		collectorState                  string
 		quarantineThreats, siemInsecure bool
 		poll                            time.Duration
 		siemSpecs                       []string
@@ -80,7 +82,18 @@ func newDaemonCmd() *cobra.Command {
 		}
 		opts := daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll,
 			Status: cmd.ErrOrStderr(), Detect: !noDetect, QuarantineThreats: quarantineThreats, SIEM: sinks}
-		if !noConnect {
+		if collectorState != "" {
+			// A v2 collector (authsec-local): enrolled, synced through
+			// /api/iga/v2/agent-sync, policies delivered signed.
+			errOut := cmd.ErrOrStderr()
+			col, err := collector.New(collector.Options{Version: Version, StateDir: collectorState,
+				PolicyDir: filepath.Join(collectorState, "policies"), Status: func(s string) { fmt.Fprintln(errOut, s) }})
+			if err != nil {
+				return ioErr(fmt.Errorf("collector: %w (enroll with 'authsec-cli collector enroll')", err))
+			}
+			opts.Link, opts.ConsolePolicyDir = col, filepath.Join(collectorState, "policies")
+			fmt.Fprintf(errOut, "collector %s: %s\n", col.State().CollectorID, col.State().URL)
+		} else if !noConnect {
 			lc, err := link.Load(link.Path())
 			switch {
 			case err == nil:
@@ -128,6 +141,7 @@ process table and logs agents and their connections, but not files.`,
 		c.Flags().StringVar(&siemTokenEnv, "siem-token-env", "AUTHSEC_SIEM_TOKEN", "environment variable holding the SIEM token (the name, never the value)")
 		c.Flags().BoolVar(&siemInsecure, "siem-insecure", false, "do not verify the SIEM's TLS certificate (testing only)")
 		c.Flags().BoolVar(&noConnect, "no-connect", false, "do not use the console connection saved by 'authsec-cli connect'")
+		c.Flags().StringVar(&collectorState, "collector-state", "", "run as the enrolled v2 collector kept in this folder (see 'authsec-cli collector')")
 	}
 
 	cmd.AddCommand(runCmd,

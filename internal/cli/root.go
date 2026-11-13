@@ -57,13 +57,15 @@ prints a secret value. 'scan' sends nothing anywhere.`,
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr("%v", err) })
-	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newEnforceCmd(), newQuarantineCmd(false), newQuarantineCmd(true), newRunCmd(), newConfineCmd(), newHookCmd(), newDetectCmd(), newLogsCmd(), newCloudCmd(), newConnectCmd(), newDisconnectCmd(), newCatalogueCmd(), newVersionCmd())
+	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newEnforceCmd(), newQuarantineCmd(false), newQuarantineCmd(true), newRunCmd(), newConfineCmd(), newHookCmd(), newDetectCmd(), newLogsCmd(), newCloudCmd(), newConnectCmd(), newDisconnectCmd(), newCollectorCmd(), newCatalogueCmd(), newVersionCmd())
 	return root
 }
 
 // Execute runs the CLI and returns the process exit code.
 func Execute() int {
-	err := NewRoot(os.Stdout, os.Stderr).Execute()
+	root := NewRoot(os.Stdout, os.Stderr)
+	root.SetArgs(AliasArgs(os.Args[0], os.Args[1:]))
+	err := root.Execute()
 	code := exitCode(err)
 	if err != nil && err.Error() != "" {
 		var ee *ExitError
