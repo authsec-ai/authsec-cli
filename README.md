@@ -25,6 +25,7 @@ authsec-cli logs --since 1h --format cef        # or --siem splunk+https://...:8
 authsec-cli cloud agents --env .env   # Bedrock, AgentCore, Azure OpenAI, AI Foundry
 authsec-cli cloud quarantine my-agent --apply   # AWS: deny-all on the agent's role
 authsec-cli catalogue                 # every config file a scan may read
+sudo authsec-cli connect --url https://api.authsec.ai --workspace <id> --token-stdin
 ```
 
 **Enforcement** (policies with `mode: enforce`):
@@ -53,6 +54,18 @@ high-severity detection quarantines the agent.
 webhook, or to Splunk HEC, each with compliance tags (OWASP Top 10 for LLM and
 agentic applications). The token is read from an environment variable named
 with `--siem-token-env`.
+
+**Console:** `connect` saves the API URL, workspace and ingest token shown in
+the console under Add > Machine (`/etc/authsec/connect.json`, 0600; the token
+never goes on the command line). The daemon then registers the machine,
+reports its agents, sends decisions, detections and access summaries (every
+10 minutes, covering the last hour)
+to the console's logs (with the same tags), and applies the policies saved in
+the console (kept in `/var/lib/authsec/console-policies`; they win over a
+local policy for the same agent; one that fails `policy check` is not
+applied). When enforcement is turned on for the machine in the console, the
+daemon hands over its own credential and carries out quarantine and release
+from the console. `--no-connect` runs without it; `disconnect` forgets it.
 
 **Agents recognised:** Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub
 Copilot, Cursor, Windsurf, VS Code AI features, Aider, OpenCode, Goose,

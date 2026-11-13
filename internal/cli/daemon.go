@@ -18,6 +18,7 @@ import (
 
 	"github.com/authsec-ai/authsec-cli/internal/daemon"
 	"github.com/authsec-ai/authsec-cli/internal/events"
+	"github.com/authsec-ai/authsec-cli/internal/link"
 	"github.com/authsec-ai/authsec-cli/internal/siem"
 )
 
@@ -31,6 +32,7 @@ func newDaemonCmd() *cobra.Command {
 	var (
 		logPath, policies, siemTokenEnv string
 		noEBPF, noEnforce, noDetect     bool
+		noConnect                       bool
 		quarantineThreats, siemInsecure bool
 		poll                            time.Duration
 		siemSpecs                       []string
@@ -76,8 +78,22 @@ func newDaemonCmd() *cobra.Command {
 			defer sk.Close()
 			sinks = append(sinks, sk)
 		}
-		err = daemon.Run(ctx, daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll,
-			Status: cmd.ErrOrStderr(), Detect: !noDetect, QuarantineThreats: quarantineThreats, SIEM: sinks})
+		opts := daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll,
+			Status: cmd.ErrOrStderr(), Detect: !noDetect, QuarantineThreats: quarantineThreats, SIEM: sinks}
+		if !noConnect {
+			lc, err := link.Load(link.Path())
+			switch {
+			case err == nil:
+				errOut := cmd.ErrOrStderr()
+				opts.ConsolePolicyDir = consolePolicyDir(logPath)
+				opts.Link = link.New(lc, link.Options{Version: Version, ConsoleDir: opts.ConsolePolicyDir,
+					LogPath: logPath, Status: func(s string) { fmt.Fprintln(errOut, s) }})
+				fmt.Fprintf(errOut, "console: %s, workspace %s\n", lc.Base(), lc.WorkspaceID)
+			case !errors.Is(err, os.ErrNotExist):
+				return ioErr(fmt.Errorf("console connection: %w (fix it, run 'authsec-cli disconnect', or pass --no-connect)", err))
+			}
+		}
+		err = daemon.Run(ctx, opts)
 		if err != nil {
 			return ioErr(err)
 		}
@@ -111,6 +127,7 @@ process table and logs agents and their connections, but not files.`,
 		c.Flags().StringArrayVar(&siemSpecs, "siem", nil, "forward records to a SIEM: syslog+udp|tcp|tls://host:port, webhook+https://..., splunk+https://host:8088 (repeatable)")
 		c.Flags().StringVar(&siemTokenEnv, "siem-token-env", "AUTHSEC_SIEM_TOKEN", "environment variable holding the SIEM token (the name, never the value)")
 		c.Flags().BoolVar(&siemInsecure, "siem-insecure", false, "do not verify the SIEM's TLS certificate (testing only)")
+		c.Flags().BoolVar(&noConnect, "no-connect", false, "do not use the console connection saved by 'authsec-cli connect'")
 	}
 
 	cmd.AddCommand(runCmd,

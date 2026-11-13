@@ -10,7 +10,7 @@ Every story in the sheet works end to end by day 7. Depth is cut where noted.
 | 3 ✅ | Policy YAML: schema, `policy generate` into `./policies/`, `policy check`, OpenShell export | generate, `vi`, check |
 | 4 ✅ | Enforcement: agent cgroup + nftables network allow list, quarantine/release (cgroup freeze), Claude Code PreToolUse hook for commands, `run --enforce` through OpenShell | blocked host fails, quarantine freezes |
 | 5 ✅ | Detections: ARTEX and offensive agent. SIEM: syslog (CEF) and webhook. Cloud mode from `.env`: AWS Bedrock agents and AgentCore runtimes, Azure AI Foundry/OpenAI | ARTEX in Docker is detected; `--cloud agents` |
-| 6 | Control plane: connect with an ingest token from the console, push agents and events to discovery, policy and action pull (quarantine, block) | the machine shows in the console |
+| 6 ✅ | Control plane: `connect` with an ingest token; the machine registers as a discovery source, reports agents, pushes decisions, detections and access summaries; console policies are pulled and applied; quarantine and release from the console (backend migration 147) | `scripts/console-smoke.sh`: console quarantine freezes the agent |
 | 7 | Console screens (agents, access, policy, quarantine and block actions), release build, demo script, fixes | full demo |
 
 ## Cut for the week

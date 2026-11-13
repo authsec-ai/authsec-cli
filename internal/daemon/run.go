@@ -18,6 +18,7 @@ import (
 	"github.com/authsec-ai/authsec-cli/internal/detect"
 	"github.com/authsec-ai/authsec-cli/internal/enforce"
 	"github.com/authsec-ai/authsec-cli/internal/events"
+	"github.com/authsec-ai/authsec-cli/internal/link"
 	"github.com/authsec-ai/authsec-cli/internal/policy"
 	"github.com/authsec-ai/authsec-cli/internal/proc"
 	"github.com/authsec-ai/authsec-cli/internal/recognise"
@@ -46,6 +47,11 @@ type Options struct {
 	SIEM []Sink
 	// Tee receives every record (SIEM forwarding, control plane).
 	Tee func(events.Record)
+	// Link connects the machine to the AuthSec console (nil: not connected).
+	// Its policies are written to ConsolePolicyDir and win over a local
+	// policy for the same agent.
+	Link             *link.Link
+	ConsolePolicyDir string
 }
 
 // Sink forwards records (internal/siem).
@@ -104,6 +110,9 @@ func Run(ctx context.Context, opt Options) error {
 		if opt.Tee != nil {
 			opt.Tee(r)
 		}
+		if opt.Link != nil {
+			opt.Link.Tee(r)
+		}
 	}
 	write := func(r events.Record) {
 		if err := w.Write(r); err != nil {
@@ -138,8 +147,9 @@ func Run(ctx context.Context, opt Options) error {
 			}
 			return m.Members(top)
 		}}
+	havePolicies := opt.PolicyDir != "" || opt.ConsolePolicyDir != ""
 	enforcing := "off (no policy folder)"
-	if opt.PolicyDir != "" {
+	if havePolicies {
 		enforcing = "decisions logged, nothing blocked"
 		switch {
 		case opt.NoEnforce:
@@ -163,14 +173,29 @@ func Run(ctx context.Context, opt Options) error {
 	eng := enforce.NewEngine(engCfg)
 	defer eng.Shutdown()
 	var policyStamp string
+	stamp := func() string { return dirStamp(opt.PolicyDir) + "|" + dirStamp(opt.ConsolePolicyDir) }
 	loadPolicies := func(reason string) {
-		if opt.PolicyDir == "" {
+		if !havePolicies {
 			return
 		}
-		files, err := policy.LoadDir(opt.PolicyDir)
-		if err != nil {
-			write(events.Record{Type: events.Sensor, Note: "policies: " + err.Error()})
-			return
+		// Console policies first: the first good policy of an agent wins.
+		var files []*policy.File
+		for _, dir := range []string{opt.ConsolePolicyDir, opt.PolicyDir} {
+			if dir == "" {
+				continue
+			}
+			fs, err := policy.LoadDir(dir)
+			if err != nil {
+				if dir == opt.ConsolePolicyDir && errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				write(events.Record{Type: events.Sensor, Note: "policies: " + err.Error()})
+				if dir == opt.PolicyDir {
+					return
+				}
+				continue
+			}
+			files = append(files, fs...)
 		}
 		bad := 0
 		for _, f := range files {
@@ -185,8 +210,8 @@ func Run(ctx context.Context, opt Options) error {
 		}
 		write(events.Record{Type: events.Sensor, Note: fmt.Sprintf("policies loaded (%s): %d files, %d with errors", reason, len(files), bad)})
 	}
-	if opt.PolicyDir != "" {
-		policyStamp = dirStamp(opt.PolicyDir)
+	if havePolicies {
+		policyStamp = stamp()
 		loadPolicies("start")
 	}
 	if opt.EnforceHook != nil {
@@ -211,7 +236,7 @@ func Run(ctx context.Context, opt Options) error {
 			}
 			return pr.Kill()
 		}}
-	if opt.PolicyDir != "" {
+	if havePolicies {
 		deps.Enforcer = eng
 	}
 	if s != nil {
@@ -277,6 +302,18 @@ func Run(ctx context.Context, opt Options) error {
 	resolveHosts()
 	fmt.Fprintf(opt.Status, "following %d agents\n", len(m.Agents()))
 
+	var linkCmds <-chan link.Command
+	shareAgents := func() {}
+	if opt.Link != nil {
+		linkCmds = opt.Link.Commands()
+		shareAgents = func() {
+			opt.Link.SetAgents(m.Agents(), map[string]any{"sensor": mode, "enforcement": enforcing})
+		}
+		shareAgents()
+		go opt.Link.Run(ctx, write)
+	}
+	reloadAll := func(reason string) { policyStamp = stamp(); loadPolicies(reason); resolveHosts() }
+
 	every := opt.Rescan
 	if s == nil {
 		every = opt.Poll
@@ -337,7 +374,7 @@ func Run(ctx context.Context, opt Options) error {
 		case r := <-resolvedCh:
 			eng.DNS(r.host, r.ips, 10*time.Minute)
 		case c := <-calls:
-			resp := handleCall(c, eng, m, write, func() { policyStamp = dirStamp(opt.PolicyDir); loadPolicies("reload"); resolveHosts() })
+			resp := handleCall(c, eng, m, write, func() { reloadAll("reload") })
 			if c.req.Op == control.OpRelease && resp.OK {
 				for _, a := range m.Agents() {
 					if a.PID == c.req.PID || (c.req.Agent != "" && a.ID == c.req.Agent) {
@@ -348,6 +385,8 @@ func Run(ctx context.Context, opt Options) error {
 				}
 			}
 			c.reply <- resp
+		case lc := <-linkCmds:
+			lc.Reply <- linkCommand(lc, eng, m, released, reloadAll)
 		case <-flush.C:
 			if err := eng.Flush(); err != nil {
 				fmt.Fprintln(opt.Status, "enforcement:", err)
@@ -357,11 +396,10 @@ func Run(ctx context.Context, opt Options) error {
 				m.Reconcile(snap, s == nil)
 			}
 			eng.Tick()
-			if opt.PolicyDir != "" {
-				if st := dirStamp(opt.PolicyDir); st != policyStamp {
-					policyStamp = st
-					loadPolicies("files changed")
-					resolveHosts()
+			shareAgents()
+			if havePolicies {
+				if st := stamp(); st != policyStamp {
+					reloadAll("files changed")
 				}
 			}
 			if s != nil {
@@ -378,6 +416,32 @@ func Run(ctx context.Context, opt Options) error {
 			resolveHosts()
 		}
 	}
+}
+
+// linkCommand carries out what the console asked for.
+func linkCommand(c link.Command, eng *enforce.Engine, m *Monitor, released map[int]uint64, reload func(string)) link.Result {
+	switch c.Op {
+	case "reload":
+		reload("console")
+		return link.Result{}
+	case "quarantine":
+		n, err := eng.Quarantine(c.Agent, 0)
+		return link.Result{Instances: n, Err: err}
+	case "release":
+		n, err := eng.Release(c.Agent, 0)
+		if err == nil {
+			// No automatic quarantine of these instances again.
+			for _, a := range m.Agents() {
+				if a.ID == c.Agent {
+					if st, ok := proc.StartTime(a.PID); ok {
+						released[a.PID] = st
+					}
+				}
+			}
+		}
+		return link.Result{Instances: n, Err: err}
+	}
+	return link.Result{Err: fmt.Errorf("unknown command %q", c.Op)}
 }
 
 // handleCall runs one control request in the daemon's loop.
