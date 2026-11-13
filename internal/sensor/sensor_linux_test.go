@@ -25,9 +25,15 @@ func TestParseDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Wrap in IPv4 (20-byte header) + UDP (8 bytes), as the packet socket delivers it.
-	pkt := append(append([]byte{0x45}, make([]byte, 27)...), msg...)
+	// Wrap in IPv4 (20-byte header, source 127.0.0.53) + UDP (8 bytes), as the packet socket delivers it.
+	hdr := make([]byte, 28)
+	hdr[0] = 0x45
+	copy(hdr[12:16], []byte{127, 0, 0, 53})
+	pkt := append(hdr, msg...)
 	a, ok := ParseDNSPacket(pkt)
+	if !a.Src.Equal(net.ParseIP("127.0.0.53")) {
+		t.Errorf("source = %v", a.Src)
+	}
 	if !ok || a.Name != "api.openai.com" || len(a.IPs) != 1 || !a.IPs[0].Equal(net.ParseIP("162.159.140.245")) || a.TTL != time.Minute {
 		t.Errorf("got %+v %v", a, ok)
 	}

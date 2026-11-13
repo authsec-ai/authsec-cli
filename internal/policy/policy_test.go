@@ -2,6 +2,7 @@ package policy
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -256,8 +257,8 @@ func TestDefaultPolicyAndSet(t *testing.T) {
 	}
 	s := NewSet(files)
 	cl, err1 := s.For("claude-code")
-	cx, err2 := s.For("codex")
-	if err1 != nil || err2 != nil || cl.Mode != Enforce || cx.Agent.ID != AnyAgent || s.Len() != 2 {
+	_, err2 := s.For("codex") // broken.yaml does not parse: it may be codex's policy
+	if err1 != nil || !errors.Is(err2, ErrBrokenPolicy) || cl.Mode != Enforce || s.Len() != 2 {
 		t.Errorf("set = %v %v %v", s.SortedIDs(), err1, err2)
 	}
 	for _, f := range files {

@@ -87,3 +87,11 @@ func get(pid int) (*Process, bool) {
 	p, ok := s.Procs[pid]
 	return p, ok
 }
+
+func startTime(pid int) (uint64, bool) {
+	p, ok := get(pid)
+	if !ok {
+		return 0, false
+	}
+	return uint64(p.Started.Unix()), true
+}

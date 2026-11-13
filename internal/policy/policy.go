@@ -253,6 +253,10 @@ func LoadDir(dir string) ([]*File, error) {
 type Set struct {
 	ok     map[string]*Policy
 	broken map[string]string // agent id -> file
+	// unnamed is a file that did not parse, so its agent is unknown: it
+	// may be any agent's policy (or the default), so no agent without a
+	// usable policy of its own falls back to the default.
+	unnamed string
 }
 
 // ErrBrokenPolicy is returned for an agent whose own policy has errors: it
@@ -269,6 +273,9 @@ func NewSet(files []*File) Set {
 			id = f.Policy.Agent.ID
 		} else {
 			id = strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f.Path), ".yaml"), ".yml")
+			if !f.OK() && s.unnamed == "" {
+				s.unnamed = f.Path
+			}
 		}
 		if f.OK() {
 			if _, dup := s.ok[id]; !dup {
@@ -292,6 +299,14 @@ func (s Set) For(agentID string) (*Policy, error) {
 	}
 	if f, ok := s.broken[agentID]; ok {
 		return nil, fmt.Errorf("%w: %s", ErrBrokenPolicy, f)
+	}
+	// Falling back to the default is safe only when the default is usable
+	// and no broken file could be this agent's own policy.
+	if f, ok := s.broken[AnyAgent]; ok {
+		return nil, fmt.Errorf("%w: the default policy %s", ErrBrokenPolicy, f)
+	}
+	if s.unnamed != "" {
+		return nil, fmt.Errorf("%w: %s does not parse, so it may be this agent's policy", ErrBrokenPolicy, s.unnamed)
 	}
 	return s.ok[AnyAgent], nil
 }

@@ -65,7 +65,10 @@ type Record struct {
 	Threat    bool      `json:"threat,omitempty"`
 	Rule      string    `json:"rule,omitempty"`     // detection or policy rule
 	Severity  string    `json:"severity,omitempty"` // detections
-	Action    string    `json:"action,omitempty"`   // decisions: allow, deny, quarantine, release
+	Action    string    `json:"action,omitempty"`   // decisions: allow, deny, ask, quarantine, release, kill
+	Kind      string    `json:"kind,omitempty"`     // decisions: network, file, command, mcp, web, agent
+	Enforced  bool      `json:"enforced,omitempty"` // decisions: the action was blocked (not only logged)
+	Source    string    `json:"source,omitempty"`   // decisions: daemon, claude-hook, run, console
 	Note      string    `json:"note,omitempty"`
 }
 

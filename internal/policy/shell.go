@@ -51,6 +51,12 @@ func parseInto(out *parsedLine, line string, depth int) bool {
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch x := n.(type) {
 		case *syntax.CallExpr:
+			if len(x.Args) > 0 && !literalWord(x.Args[0]) {
+				// The program name comes from an expansion ($cmd, $(...)):
+				// what runs cannot be known from the text.
+				ok = false
+				return true
+			}
 			argv := make([]string, 0, len(x.Args))
 			for _, w := range x.Args {
 				argv = append(argv, wordString(w))
@@ -97,6 +103,25 @@ func collectPipe(b *syntax.BinaryCmd, stages *[]string) {
 			*stages = append(*stages, "?")
 		}
 	}
+}
+
+// literalWord reports whether a word is plain text (quotes allowed, no
+// expansions).
+func literalWord(w *syntax.Word) bool {
+	for _, p := range w.Parts {
+		switch x := p.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			for _, q := range x.Parts {
+				if _, ok := q.(*syntax.Lit); !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // wordString renders a word as the shell would before expansion: quotes
@@ -253,22 +278,42 @@ done:
 // their variants: git without its global options, rm with its recursive and
 // force flags written as -rf, one form per target.
 func canonical(argv []string) []string {
+	if sub, ok := strings.CutPrefix(argv[0], "git-"); ok && sub != "" {
+		// git-push is git push (git's dashed form, still installed).
+		argv = append([]string{"git", sub}, argv[1:]...)
+		return append([]string{strings.Join(argv, " ")}, canonical(argv)...)
+	}
 	switch argv[0] {
 	case "git":
 		rest := argv[1:]
+		aliases := map[string]string{}
 		for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
 			switch rest[0] {
 			case "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path":
 				if len(rest) > 1 {
+					if rest[0] == "-c" {
+						if k, v, ok := strings.Cut(rest[1], "="); ok && strings.HasPrefix(strings.ToLower(k), "alias.") {
+							aliases[strings.ToLower(strings.TrimPrefix(k, k[:6]))] = v
+						}
+					}
 					rest = rest[2:]
 					continue
 				}
 			}
 			rest = rest[1:]
 		}
+		var out []string
 		if len(rest) < len(argv)-1 {
-			return []string{strings.Join(append([]string{"git"}, rest...), " ")}
+			out = append(out, strings.Join(append([]string{"git"}, rest...), " "))
 		}
+		// git -c alias.p='push --force' p: the alias is what runs.
+		if len(rest) > 0 {
+			if v, ok := aliases[strings.ToLower(rest[0])]; ok {
+				v = strings.TrimPrefix(v, "!")
+				out = append(out, strings.Join(append([]string{"git", v}, rest[1:]...), " "), strings.Join(append([]string{v}, rest[1:]...), " "))
+			}
+		}
+		return out
 	case "rm":
 		var recursive, force bool
 		var targets []string

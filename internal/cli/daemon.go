@@ -28,9 +28,9 @@ const (
 
 func newDaemonCmd() *cobra.Command {
 	var (
-		logPath string
-		noEBPF  bool
-		poll    time.Duration
+		logPath, policies string
+		noEBPF, noEnforce bool
+		poll              time.Duration
 	)
 	run := func(cmd *cobra.Command, _ []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -38,7 +38,15 @@ func newDaemonCmd() *cobra.Command {
 		if logPath == "" {
 			logPath = events.DefaultPath()
 		}
-		err := daemon.Run(ctx, daemon.Options{LogPath: logPath, NoEBPF: noEBPF, Poll: poll, Status: cmd.ErrOrStderr()})
+		if policies == "" {
+			policies = enforcementDir()
+		}
+		if policies == "none" {
+			policies = ""
+		} else if abs, err := filepath.Abs(policies); err == nil {
+			policies = abs
+		}
+		err := daemon.Run(ctx, daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll, Status: cmd.ErrOrStderr()})
 		if err != nil {
 			return ioErr(err)
 		}
@@ -61,12 +69,13 @@ process table and logs agents and their connections, but not files.`,
 	}
 	f := cmd.PersistentFlags()
 	f.StringVar(&logPath, "log", "", "event log (default /var/lib/authsec/events.jsonl as root, else ~/.local/state/authsec/events.jsonl)")
-	cmd.Flags().BoolVar(&noEBPF, "no-ebpf", false, "poll the process table instead of using eBPF")
-	cmd.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval without eBPF")
-
 	runCmd := &cobra.Command{Use: "run", Short: "Run in the foreground (what the service runs)", Args: cobra.NoArgs, RunE: run}
-	runCmd.Flags().BoolVar(&noEBPF, "no-ebpf", false, "poll the process table instead of using eBPF")
-	runCmd.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval without eBPF")
+	for _, c := range []*cobra.Command{cmd, runCmd} {
+		c.Flags().BoolVar(&noEBPF, "no-ebpf", false, "poll the process table instead of using eBPF")
+		c.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval without eBPF")
+		c.Flags().StringVar(&policies, "policies", "", "policy folder to apply (default /etc/authsec/policies, else ./policies; \"none\" to only observe)")
+		c.Flags().BoolVar(&noEnforce, "no-enforce", false, "log what policies would block, block nothing")
+	}
 
 	cmd.AddCommand(runCmd,
 		&cobra.Command{Use: "install", Short: "Install and start the systemd service (root)", Args: cobra.NoArgs,
@@ -83,20 +92,21 @@ process table and logs agents and their connections, but not files.`,
 // never be the thing slowing a machine down.
 func unit(bin, logPath string) string {
 	return fmt.Sprintf(`[Unit]
-Description=AuthSec Agent Kit sensor (finds AI agents and logs what they do)
+Description=AuthSec Agent Kit (finds AI agents, logs what they do, enforces their policies)
 Documentation=https://authsec.ai
 After=network-online.target
 
 [Service]
-ExecStart=%s daemon run --log %s
+ExecStart=%s daemon run --log %s --policies /etc/authsec/policies
 Restart=on-failure
 RestartSec=5
 Nice=10
 MemoryMax=128M
 CPUQuota=20%%
+RuntimeDirectory=authsec
 ProtectHome=read-only
 ProtectSystem=full
-ReadWritePaths=%s
+ReadWritePaths=%s /sys/fs/cgroup /run/authsec
 
 [Install]
 WantedBy=multi-user.target

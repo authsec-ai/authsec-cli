@@ -254,18 +254,27 @@ func ParseDNSPacket(pkt []byte) (DNSAnswer, bool) {
 		return DNSAnswer{}, false
 	}
 	var off int
+	var src net.IP
 	switch pkt[0] >> 4 {
 	case 4:
 		off = int(pkt[0]&0x0F) * 4
+		if len(pkt) >= 20 {
+			src = net.IP(append([]byte(nil), pkt[12:16]...))
+		}
 	case 6:
 		off = 40
+		if len(pkt) >= 40 {
+			src = net.IP(append([]byte(nil), pkt[8:24]...))
+		}
 	default:
 		return DNSAnswer{}, false
 	}
 	if len(pkt) < off+8 {
 		return DNSAnswer{}, false
 	}
-	return ParseDNS(pkt[off+8:])
+	a, ok := ParseDNS(pkt[off+8:])
+	a.Src = src
+	return a, ok
 }
 
 // ParseDNS reads a DNS response message.

@@ -51,6 +51,11 @@ func Take() (*Snapshot, error) { return take() }
 // Windows it takes a whole snapshot.
 func Get(pid int) (*Process, bool) { return get(pid) }
 
+// StartTime is a process's start time in boot clock ticks (Linux) or
+// seconds (elsewhere); ok is false when it has exited. A pid with a new
+// start time is a different process.
+func StartTime(pid int) (uint64, bool) { return startTime(pid) }
+
 // Children returns the direct children of pid, sorted by pid.
 func (s *Snapshot) Children(pid int) []*Process {
 	var out []*Process

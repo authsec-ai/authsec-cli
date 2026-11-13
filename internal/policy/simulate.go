@@ -66,7 +66,7 @@ func Simulate(p *Policy, recs []events.Record, match func(events.Agent) bool, ho
 			imp.Checked++
 			agents[r.Agent.ID] = true
 			fp := ep
-			if root := gitRoot(r.Path); root != "" {
+			if root := GitRoot(r.Path); root != "" {
 				fp = p.Expand(home, root) // {project}: the project the file is in
 			}
 			if d := fp.DecideFile(r.Path, r.Access == "write"); d.Action != Allow {
@@ -119,8 +119,8 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-// gitRoot returns the git project a path is in, or "".
-func gitRoot(path string) string {
+// GitRoot returns the git project a path is in, or "".
+func GitRoot(path string) string {
 	for d := filepath.Dir(path); d != "/" && d != "." && d != ""; d = filepath.Dir(d) {
 		if st, err := os.Stat(filepath.Join(d, ".git")); err == nil && st.IsDir() {
 			return d

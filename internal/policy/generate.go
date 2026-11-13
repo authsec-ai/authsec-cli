@@ -65,6 +65,10 @@ var (
 		"terraform apply*", "terraform * apply*", "kubectl apply*", "kubectl * apply*", "kubectl delete*", "kubectl * delete*",
 		"helm upgrade*", "helm install*", "aws * delete*", "aws * terminate*", "az * delete*", "gcloud * delete*",
 		"docker push*", "npm publish*", "git push*",
+		// Programs that start work outside the agent's process tree, where
+		// its network and command rules do not reach.
+		"systemd-run*", "systemctl --user*", "docker run*", "docker exec*", "podman run*", "podman exec*",
+		"tmux*", "screen*", "at *", "crontab*", "nsenter*",
 	}
 )
 

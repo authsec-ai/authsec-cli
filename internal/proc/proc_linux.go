@@ -248,3 +248,20 @@ func hexAddr(s string) (net.IP, int, bool) {
 	}
 	return ip, int(port), true
 }
+
+func startTime(pid int) (uint64, bool) {
+	b, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, false
+	}
+	i := bytes.LastIndexByte(b, ')')
+	if i < 0 {
+		return 0, false
+	}
+	f := strings.Fields(string(b[i+1:]))
+	if len(f) < 20 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(f[19], 10, 64)
+	return v, err == nil
+}

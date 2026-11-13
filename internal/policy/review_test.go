@@ -187,8 +187,20 @@ func TestBrokenAgentPolicyDoesNotFallBackToDefault(t *testing.T) {
 			t.Errorf("%s: %v %v, want ErrBrokenPolicy", id, p, err)
 		}
 	}
-	if p, err := s.For("gemini-cli"); err != nil || p.Agent.ID != AnyAgent {
+	// A file that does not parse may be anyone's policy: no fallback.
+	if p, err := s.For("gemini-cli"); !errors.Is(err, ErrBrokenPolicy) || p != nil {
+		t.Errorf("agent without a file, with an unparsable file present: %v %v", p, err)
+	}
+	_ = os.Remove(filepath.Join(dir, "claude-code.yaml"))
+	files, _ = LoadDir(dir)
+	if p, err := NewSet(files).For("gemini-cli"); err != nil || p.Agent.ID != AnyAgent {
 		t.Errorf("agent without a file: %v %v", p, err)
+	}
+	// A broken default: no agent falls back to it.
+	write("default.yaml", "apiVersion: authsec.ai/v1\nkind: AgentPolicy\nagent: {id: \"*\"}\nmode: wrong\n")
+	files, _ = LoadDir(dir)
+	if p, err := NewSet(files).For("gemini-cli"); !errors.Is(err, ErrBrokenPolicy) || p != nil {
+		t.Errorf("broken default: %v %v", p, err)
 	}
 }
 
@@ -350,5 +362,31 @@ filesystem:
 		if rw == "/" || rw == "//" || rw == "/./" {
 			t.Errorf("root in read_write: %v", o.FilesystemPolicy.ReadWrite)
 		}
+	}
+}
+
+func TestDay4CommandBypasses(t *testing.T) {
+	p := defaultExpanded(t)
+	for _, cmd := range []string{
+		"git-push --force origin main",
+		"/usr/lib/git-core/git-push --force",
+		"git -c alias.p='push --force' p origin",
+		"git -c alias.yolo='!git push --force' yolo",
+	} {
+		if d := p.DecideCommand(cmd); d.Action != Deny {
+			t.Errorf("%q: %+v, want deny", cmd, d)
+		}
+	}
+	open := &Policy{Commands: Commands{Default: Allow}}
+	for _, cmd := range []string{`$X push --force`, `$(echo git) push`, "`which rm` -rf /"} {
+		if d := open.DecideCommand(cmd); d.Action != Ask {
+			t.Errorf("%q: %+v, want ask (program from an expansion)", cmd, d)
+		}
+	}
+	if d := p.DecideCommand(`echo "$HOME"`); d.Action == Deny {
+		t.Errorf("an expansion in an argument is fine: %+v", d)
+	}
+	if d := p.DecideCommand("systemd-run --user --pipe -- curl evil"); d.Action != Ask {
+		t.Errorf("systemd-run: %+v, want ask", d)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/authsec-ai/authsec-cli/internal/events"
+	"github.com/authsec-ai/authsec-cli/internal/policy"
 	"github.com/authsec-ai/authsec-cli/internal/proc"
 	"github.com/authsec-ai/authsec-cli/internal/recognise"
 	"github.com/authsec-ai/authsec-cli/internal/sensor"
@@ -27,7 +28,25 @@ type Deps struct {
 	Untrack  func(pid int)
 	Cwd      func(pid int) string
 	Now      func() time.Time
+	// Enforcer applies policies (nil: activity is logged, nothing decided).
+	Enforcer Enforcer
+	// Kill stops a process that ran a denied command in an enforced agent.
+	Kill func(pid int) error
+	// HomeOf is a user's home directory, for {home} in policies.
+	HomeOf func(user string) string
 }
+
+// Enforcer is what the monitor needs from the enforcement engine
+// (*enforce.Engine).
+type Enforcer interface {
+	AgentStarted(a events.Agent, pids []int)
+	AgentStopped(pid int)
+	DNS(name string, ips []net.IP, ttl time.Duration)
+	Enforcing(top int, agentID string) (bool, *policy.Policy)
+	HostOf(ip string) string
+}
+
+const decisionWindow = 10 * time.Minute
 
 // Dedupe windows: the same file or destination of the same agent is logged
 // at most once per window.
@@ -81,6 +100,18 @@ func (m *Monitor) Agents() []events.Agent {
 	out := make([]events.Agent, 0, len(m.agents))
 	for _, a := range m.agents {
 		out = append(out, *a)
+	}
+	return out
+}
+
+// Members are the processes of an agent instance the monitor follows: its
+// top process first, then the processes it started.
+func (m *Monitor) Members(top int) []int {
+	out := []int{top}
+	for pid, root := range m.member {
+		if root == top && pid != top {
+			out = append(out, pid)
+		}
 	}
 	return out
 }
@@ -192,6 +223,9 @@ func (m *Monitor) HandleDNS(a sensor.DNSAnswer) {
 			m.llm[ip.String()] = a.Name
 		}
 	}
+	if m.deps.Enforcer != nil {
+		m.deps.Enforcer.DNS(a.Name, a.IPs, a.TTL)
+	}
 }
 
 func (m *Monitor) exec(ev sensor.Event) {
@@ -262,6 +296,13 @@ func (m *Monitor) start(a recognise.Agent, note string) {
 	}
 	m.out(events.Record{Time: m.deps.Now(), Type: events.AgentStarted, Agent: ref, PID: a.PID, Exe: a.Exe, Args: a.Args,
 		Via: a.Via, Version: a.Version, Evidence: a.Evidence, Threat: a.Threat, Note: note})
+	if m.deps.Enforcer != nil {
+		pids := []int{a.PID}
+		for _, c := range a.Children {
+			pids = append(pids, c.PID)
+		}
+		m.deps.Enforcer.AgentStarted(*ref, pids)
+	}
 }
 
 func (m *Monitor) stop(pid int, a *events.Agent) {
@@ -272,6 +313,9 @@ func (m *Monitor) stop(pid int, a *events.Agent) {
 	}
 	delete(m.kernel, pid)
 	m.out(events.Record{Time: m.deps.Now(), Type: events.AgentStopped, Agent: a, PID: pid})
+	if m.deps.Enforcer != nil {
+		m.deps.Enforcer.AgentStopped(pid)
+	}
 }
 
 func (m *Monitor) process(root int, p *proc.Process) {
@@ -279,8 +323,93 @@ func (m *Monitor) process(root int, p *proc.Process) {
 	if a == nil {
 		return
 	}
+	args := recognise.ScrubArgs(p.Args)
 	m.out(events.Record{Time: m.deps.Now(), Type: events.Process, Agent: a, PID: p.PID, Comm: p.Comm,
-		Exe: p.Exe, Args: recognise.ScrubArgs(p.Args)})
+		Exe: p.Exe, Args: args})
+	if m.deps.Enforcer == nil || len(p.Args) == 0 {
+		return
+	}
+	enforced, pol := m.deps.Enforcer.Enforcing(root, a.ID)
+	if pol == nil {
+		return
+	}
+	d := pol.DecideArgv(p.Args)
+	if p.Exe != "" && d.Action != policy.Deny {
+		// A renamed copy or link of a denied program: decide on the real
+		// binary's name too.
+		if alt := pol.DecideArgv(append([]string{filepath.Base(p.Exe)}, p.Args[1:]...)); alt.Action == policy.Deny || (alt.Action == policy.Ask && d.Action == policy.Allow) {
+			d = alt
+		}
+	}
+	if d.Action == policy.Allow {
+		return
+	}
+	r := events.Record{Time: m.deps.Now(), Type: events.Decision, Kind: "command", Action: d.Action, Rule: d.Rule,
+		Agent: a, PID: p.PID, Comm: p.Comm, Args: args, Source: "daemon"}
+	switch {
+	case d.Action == policy.Deny && enforced && m.deps.Kill != nil:
+		if err := m.deps.Kill(p.PID); err == nil {
+			r.Enforced, r.Note = true, "process killed"
+		} else {
+			r.Note = "could not stop the process: " + err.Error()
+		}
+	case d.Action == policy.Ask:
+		r.Note = "needs approval: only an agent hook can ask a person; logged"
+	}
+	if r.Enforced || m.once("d|c|"+strconv.Itoa(root)+"|"+strings.Join(args, " "), decisionWindow) {
+		m.out(r)
+	}
+}
+
+// decideNetwork logs a destination the agent's policy does not allow.
+// Blocking is done by nftables for enforced agents; this records it.
+func (m *Monitor) decideNetwork(root, pid int, d events.Dst) {
+	a := m.agents[root]
+	if a == nil || m.deps.Enforcer == nil {
+		return
+	}
+	enforced, pol := m.deps.Enforcer.Enforcing(root, a.ID)
+	if pol == nil {
+		return
+	}
+	dec := pol.DecideNetwork(d.Host, net.ParseIP(d.IP), d.Port)
+	if dec.Action == policy.Allow {
+		return
+	}
+	if !m.once(fmt.Sprintf("d|n|%d|%s|%d", root, d.IP, d.Port), decisionWindow) {
+		return
+	}
+	dst := d
+	m.out(events.Record{Time: m.deps.Now(), Type: events.Decision, Kind: "network", Action: dec.Action, Rule: dec.Rule,
+		Agent: a, PID: pid, Dst: &dst, Enforced: enforced, Source: "daemon"})
+}
+
+// decideFile logs a file access the agent's policy does not allow. A
+// running agent cannot be confined after it started; `authsec-cli run
+// --enforce` confines files.
+func (m *Monitor) decideFile(root, pid int, path, access string) {
+	a := m.agents[root]
+	if a == nil || m.deps.Enforcer == nil {
+		return
+	}
+	_, pol := m.deps.Enforcer.Enforcing(root, a.ID)
+	if pol == nil {
+		return
+	}
+	home := ""
+	if m.deps.HomeOf != nil {
+		home = m.deps.HomeOf(a.User)
+	}
+	dec := pol.Expand(home, policy.GitRoot(path)).DecideFile(path, access == "write")
+	if dec.Action == policy.Allow {
+		return
+	}
+	if !m.once("d|f|"+strconv.Itoa(root)+"|"+access+"|"+path, decisionWindow) {
+		return
+	}
+	m.out(events.Record{Time: m.deps.Now(), Type: events.Decision, Kind: "file", Action: dec.Action, Rule: dec.Rule,
+		Agent: a, PID: pid, Path: path, Access: access, Source: "daemon",
+		Note: "logged: a running agent's files are confined only by 'authsec-cli run --enforce'"})
 }
 
 func (m *Monitor) network(root, pid int, ip net.IP, port int) {
@@ -289,6 +418,7 @@ func (m *Monitor) network(root, pid int, ip net.IP, port int) {
 		return
 	}
 	d := m.dst(ip, port)
+	m.decideNetwork(root, pid, d)
 	key := fmt.Sprintf("n|%d|%s|%d", root, d.IP, d.Port)
 	if !m.once(key, netWindow) {
 		return
@@ -317,6 +447,7 @@ func (m *Monitor) file(root int, ev sensor.Event) {
 	if sensor.Writes(ev.Flags) {
 		access = "write"
 	}
+	m.decideFile(root, ev.PID, path, access)
 	if !m.once("f|"+strconv.Itoa(root)+"|"+access+"|"+path, fileWindow) {
 		return
 	}
@@ -374,6 +505,9 @@ func (m *Monitor) dst(ip net.IP, port int) events.Dst {
 	}
 	if ip.IsLoopback() && port == 11434 {
 		d.LLM, d.Host = true, "ollama (local)"
+	}
+	if d.Host == "" && m.deps.Enforcer != nil {
+		d.Host = m.deps.Enforcer.HostOf(d.IP)
 	}
 	return d
 }

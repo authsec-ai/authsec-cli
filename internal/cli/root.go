@@ -57,7 +57,7 @@ prints a secret value. 'scan' sends nothing anywhere.`,
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr("%v", err) })
-	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newCatalogueCmd(), newVersionCmd())
+	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newEnforceCmd(), newQuarantineCmd(false), newQuarantineCmd(true), newRunCmd(), newConfineCmd(), newHookCmd(), newCatalogueCmd(), newVersionCmd())
 	return root
 }
 
@@ -65,7 +65,7 @@ prints a secret value. 'scan' sends nothing anywhere.`,
 func Execute() int {
 	err := NewRoot(os.Stdout, os.Stderr).Execute()
 	code := exitCode(err)
-	if err != nil && code != ExitSignal {
+	if err != nil && err.Error() != "" {
 		var ee *ExitError
 		if errors.As(err, &ee) {
 			err = ee.Err

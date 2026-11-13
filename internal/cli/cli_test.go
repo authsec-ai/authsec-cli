@@ -72,3 +72,20 @@ func TestCatalogueListsEveryEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryErrorIsPrinted(t *testing.T) {
+	// Exit code 1 errors (policy errors, refused daemon calls) must reach
+	// the user: only an empty message is silent.
+	for _, err := range []error{&ExitError{Code: ExitSignal, Err: errors.New("quarantine needs root (sudo)")}, ioErr(errors.New("x"))} {
+		if err.Error() == "" {
+			t.Fatal("empty")
+		}
+	}
+	var out, errOut bytes.Buffer
+	root := NewRoot(&out, &errOut)
+	root.SetArgs([]string{"policy", "check", "--dir", t.TempDir()})
+	err := root.Execute()
+	if exitCode(err) != ExitUsage || err == nil || err.Error() == "" {
+		t.Errorf("empty policy folder: %v", err)
+	}
+}

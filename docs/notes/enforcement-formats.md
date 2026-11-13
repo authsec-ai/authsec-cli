@@ -72,3 +72,39 @@ Each claim was read from the source and then checked by a second reviewer.
   - **Network allowlist:** `sandbox.network.allowedDomains` only prompts. It blocks only with `sandbox.network.strictAllowlist: true` or the managed `allowManagedDomainsOnly: true`.
   - **Sandbox escapes:** set `sandbox.allowUnsandboxedCommands: false`, otherwise Claude retries blocked commands outside the sandbox. Set `sandbox.failIfUnavailable: true`, otherwise commands run unsandboxed when bubblewrap or socat are missing.
   - **Tools outside the sandbox:** Read, Edit, Write, WebFetch, local MCP servers and hooks run outside Claude's sandbox. Permission rules and the hook cover them; OpenShell covers everything.
+
+## authsec-cli enforcement: what is and is not covered
+
+Checked with `make ebpf-test`-style container runs (root, real kernel) and on Ubuntu with Landlock ABI 8.
+
+- **Running agents (daemon, root):**
+  - Each agent's whole process tree is moved into `/sys/fs/cgroup/authsec/<agent>-<pid>-<start>`. Processes it starts later inherit the group, and a sweep each tick catches any that were missed.
+  - Connections opened before the move are closed (sock_diag `SOCK_DESTROY`); the program sees an error on its next write.
+  - nftables matches the group with `socket cgroupv2`. Outgoing traffic: established flows pass, DNS to the configured resolvers passes, and otherwise only the policy's addresses pass. Any-port entries cover every protocol. Incoming: new connections are dropped except on loopback.
+  - Host names become addresses through the daemon's own lookups, and through DNS answers that come only from the configured resolvers.
+- **Not covered for running agents:**
+  - **Files:** only logged.
+  - **Work handed to processes outside the tree** (`systemd-run --user`, `docker run`, an existing tmux server, cron): not enforced. Generated policies send these commands to "ask"; the Claude Code hook asks, and the daemon logs them.
+  - **Shared addresses:** IP rules cannot tell apart host names that share an address.
+- **`run --enforce` (Landlock):**
+  - **Files and ports:** only the policy's paths, the agent's own state, and system paths read-only. `/tmp`, `/var/tmp` and `/dev` are writable but not executable. Only the policy's TCP ports are reachable.
+  - **Scoping:** abstract UNIX sockets and signals to outside processes are refused (ABI 6+).
+  - **Environment:** session variables (D-Bus, ssh-agent, Docker, tmux, display) are removed.
+  - **Refused setups:** it refuses to run without the daemon (unless `--no-daemon`), with the home directory as the project, or when a denied credential store would stay readable.
+- **Isolation (hiding session sockets):** Landlock cannot block `connect()` to named UNIX sockets. `run --enforce` therefore runs the agent in its own user and mount namespace and covers `/run/user/<uid>`, `docker.sock`, X11, tmux and the ssh-agent socket.
+  - On Ubuntu 24.04+ AppArmor blocks this for unprofiled programs, and the CLI says so at start.
+  - To allow it, install this profile as root:
+
+```
+# /etc/apparmor.d/authsec-cli   (then: sudo apparmor_parser -r /etc/apparmor.d/authsec-cli)
+abi <abi/4.0>,
+include <tunables/global>
+profile authsec-cli /usr/local/bin/authsec-cli flags=(unconfined) {
+  userns,
+  include if exists <local/authsec-cli>
+}
+```
+- **Claude Code:**
+  - The hook decides commands per simple command, web fetches (including Monitor WebSockets), file paths (as given and as resolved, never through `/proc/<pid>/root` or `/dev/fd`), and MCP tools under every name form. PowerShell is asked about.
+  - In enforce mode the drop-in also sets `allowManagedHooksOnly`, `allowManagedMcpServersOnly` (when MCP is deny by default) and `requiredMinimumVersion: 2.1.295`.
+  - If the machine gets settings from the admin console, MDM or the registry, the drop-in applies only when that source sets `managedSourcesBehavior: "merge"`.

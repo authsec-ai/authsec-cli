@@ -57,6 +57,7 @@ type DNSAnswer struct {
 	Name string
 	IPs  []net.IP
 	TTL  time.Duration
+	Src  net.IP // the server that answered (from the IP header); nil if unknown
 }
 
 // ErrUnsupported means the sensor cannot run here: not Linux, no BTF, or not
