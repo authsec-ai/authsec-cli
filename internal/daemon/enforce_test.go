@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -174,5 +175,113 @@ func TestControlSocketRoundTrip(t *testing.T) {
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o666 {
 		t.Errorf("socket mode %v", st.Mode().Perm())
+	}
+}
+
+func TestDetectionsInTheMonitor(t *testing.T) {
+	h := newHarness(t)
+	var threats []events.Record
+	h.m.deps.Detect = true
+	h.m.deps.OnThreat = func(r events.Record) { threats = append(threats, r) }
+	h.m = NewMonitor(h.m.deps, func(r events.Record) { h.recs = append(h.recs, r) }, nil)
+	// A renamed ARTEX: found by its variables, followed as an agent, its
+	// child (which inherits the variables) not reported twice.
+	art := h.add(70, 1, "server", "/opt/x/server", "/opt/x/server")
+	art.EnvNames = []string{"ARTEX_BIND_ADDR", "HOME"}
+	kid := h.add(71, 70, "sh", "/bin/sh", "sh")
+	kid.EnvNames = []string{"ARTEX_BIND_ADDR"}
+	h.m.Seed(h.snap)
+	var artexDet, artexAgent int
+	for _, r := range h.recs {
+		if r.Type == events.Detection && r.Rule == "artex_present" {
+			artexDet++
+		}
+		if r.Type == events.AgentStarted && r.Agent.ID == "artex" {
+			artexAgent++
+		}
+	}
+	if artexDet != 1 || artexAgent != 1 {
+		t.Fatalf("ARTEX: %d detections, %d agents (want 1, 1): %+v", artexDet, artexAgent, h.recs)
+	}
+	// Claude runs nmap (through a wrapper script: comm is the tool's name).
+	h.add(80, 10, "nmap", "/usr/bin/dash", "/bin/sh", "/opt/tools/nmap", "-sV", "10.0.0.0/24")
+	h.m.Handle(sensor.Event{Type: sensor.Exec, PID: 80, PPID: 10, Comm: "nmap", Path: "/usr/bin/dash"})
+	found := false
+	for _, r := range threats {
+		if r.Rule == "offensive_tool" && r.Agent != nil && r.Agent.ID == "claude-code" && r.Severity == "high" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("offensive tool not reported: %+v", threats)
+	}
+	// Fan-out: many destinations in a minute.
+	for i := 0; i < 60; i++ {
+		h.m.Handle(sensor.Event{Type: sensor.Connect, PID: 10, DstIP: net.ParseIP(fmt.Sprintf("10.0.%d.%d", i/250, i%250+1)), DstPort: 22})
+	}
+	fan := false
+	for _, r := range h.recs {
+		fan = fan || (r.Type == events.Detection && r.Rule == "connection_fanout")
+	}
+	if !fan {
+		t.Error("connection fan-out not detected")
+	}
+}
+
+func TestPlantedFilesDoNotMakeARTEX(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"data", "skills"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "jwt.key"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t)
+	var threats []events.Record
+	h.m.deps.Detect = true
+	h.m.deps.OnThreat = func(r events.Record) { threats = append(threats, r) }
+	h.m = NewMonitor(h.m.deps, func(r events.Record) { h.recs = append(h.recs, r) }, nil)
+	// Files next to an ordinary process: never stat'ed, never ARTEX.
+	h.add(90, 1, "kubectl", filepath.Join(dir, "kubectl"), filepath.Join(dir, "kubectl"), "get", "pods")
+	h.m.Seed(h.snap)
+	if len(threats) != 0 {
+		t.Fatalf("planted files made a process ARTEX: %+v", threats)
+	}
+	// In a directory others may write to, the files do not count either.
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if ownedFile(os.Getuid())(filepath.Join(dir, "jwt.key")) {
+		t.Error("a file in a world-writable directory counted")
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ownedFile(os.Getuid())(filepath.Join(dir, "jwt.key")) {
+		t.Error("the process's own file did not count")
+	}
+	if ownedFile(os.Getuid()+12345)(filepath.Join(dir, "jwt.key")) && os.Getuid() != 0 {
+		t.Error("another user's file counted")
+	}
+}
+
+func TestStaleMemberIsNotTheAgents(t *testing.T) {
+	h := newHarness(t)
+	var threats []events.Record
+	h.m.deps.Detect = true
+	h.m.deps.OnThreat = func(r events.Record) { threats = append(threats, r) }
+	h.m = NewMonitor(h.m.deps, func(r events.Record) { h.recs = append(h.recs, r) }, nil)
+	h.m.Seed(h.snap)
+	h.m.member[60] = 10 // a child of claude that exited; pid 60 is reused
+	p := h.add(60, 5, "nmap", "/usr/bin/nmap", "nmap", "-sS", "10.0.0.0/24")
+	p.User = "mallory"
+	h.m.Handle(sensor.Event{Type: sensor.Exec, PID: 60, PPID: 5, Comm: "nmap", Path: "/usr/bin/nmap"})
+	if len(threats) != 0 {
+		t.Errorf("a reused pid of another process was attributed to the agent: %+v", threats)
+	}
+	if _, ok := h.m.member[60]; ok {
+		t.Error("stale membership kept")
 	}
 }

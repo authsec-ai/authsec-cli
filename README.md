@@ -19,6 +19,11 @@ sudo authsec-cli quarantine codex     # freeze an agent and cut its network
 sudo authsec-cli release codex
 sudo authsec-cli enforce claude install         # Claude Code hook (managed settings)
 authsec-cli run --enforce -- claude   # re-run an agent confined by its policy
+authsec-cli detect                    # ARTEX and agents running attack tools, now
+sudo authsec-cli daemon --quarantine-threats --siem syslog+tls://siem:6514
+authsec-cli logs --since 1h --format cef        # or --siem splunk+https://...:8088
+authsec-cli cloud agents --env .env   # Bedrock, AgentCore, Azure OpenAI, AI Foundry
+authsec-cli cloud quarantine my-agent --apply   # AWS: deny-all on the agent's role
 authsec-cli catalogue                 # every config file a scan may read
 ```
 
@@ -36,6 +41,18 @@ Limits (details in [docs/notes/enforcement-formats.md](docs/notes/enforcement-fo
 - files of an already-running agent are only logged;
 - work handed to processes outside the agent's tree (`systemd-run --user`, `docker run`, an existing tmux) is not enforced, so generated policies ask before those commands;
 - IP rules cannot tell apart host names that share an address.
+
+**Detections** (daemon, and `authsec-cli detect`): `artex_present` (ARTEX, an
+autonomous AI pentest agent, by its binary, `ARTEX_*` variables, ports, files
+or containers; a renamed binary is still found), `offensive_tool` (an agent
+starts nmap, sqlmap, nuclei, ffuf, hydra, ...), `connection_fanout` (an agent
+connects to many destinations in a minute). With `--quarantine-threats`, a
+high-severity detection quarantines the agent.
+
+**SIEM:** records go out as CEF over syslog (UDP, TCP, TLS), as JSON to a
+webhook, or to Splunk HEC, each with compliance tags (OWASP Top 10 for LLM and
+agentic applications). The token is read from an environment variable named
+with `--siem-token-env`.
 
 **Agents recognised:** Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub
 Copilot, Cursor, Windsurf, VS Code AI features, Aider, OpenCode, Goose,

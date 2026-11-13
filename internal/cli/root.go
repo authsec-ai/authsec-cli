@@ -57,7 +57,7 @@ prints a secret value. 'scan' sends nothing anywhere.`,
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageErr("%v", err) })
-	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newEnforceCmd(), newQuarantineCmd(false), newQuarantineCmd(true), newRunCmd(), newConfineCmd(), newHookCmd(), newCatalogueCmd(), newVersionCmd())
+	root.AddCommand(newAgentsCmd(), newScanCmd(), newDaemonCmd(), newAccessCmd(), newPolicyCmd(), newEnforceCmd(), newQuarantineCmd(false), newQuarantineCmd(true), newRunCmd(), newConfineCmd(), newHookCmd(), newDetectCmd(), newLogsCmd(), newCloudCmd(), newCatalogueCmd(), newVersionCmd())
 	return root
 }
 

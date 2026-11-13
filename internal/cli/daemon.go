@@ -18,6 +18,7 @@ import (
 
 	"github.com/authsec-ai/authsec-cli/internal/daemon"
 	"github.com/authsec-ai/authsec-cli/internal/events"
+	"github.com/authsec-ai/authsec-cli/internal/siem"
 )
 
 const (
@@ -28,9 +29,11 @@ const (
 
 func newDaemonCmd() *cobra.Command {
 	var (
-		logPath, policies string
-		noEBPF, noEnforce bool
-		poll              time.Duration
+		logPath, policies, siemTokenEnv string
+		noEBPF, noEnforce, noDetect     bool
+		quarantineThreats, siemInsecure bool
+		poll                            time.Duration
+		siemSpecs                       []string
 	)
 	run := func(cmd *cobra.Command, _ []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -46,7 +49,35 @@ func newDaemonCmd() *cobra.Command {
 		} else if abs, err := filepath.Abs(policies); err == nil {
 			policies = abs
 		}
-		err := daemon.Run(ctx, daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll, Status: cmd.ErrOrStderr()})
+		host, _ := os.Hostname()
+		te, err := tokenEnvFor(cmd.Flags().Changed("siem-token-env"), siemTokenEnv)
+		if err != nil {
+			return err
+		}
+		httpSinks := 0
+		for _, spec := range siemSpecs {
+			if strings.HasPrefix(spec, "webhook+") || strings.HasPrefix(spec, "splunk+") {
+				httpSinks++
+			}
+		}
+		if te != "" && httpSinks > 1 {
+			return usageErr("one SIEM token would go to %d HTTP destinations: use one webhook or Splunk destination per daemon", httpSinks)
+		}
+		var sinks []daemon.Sink
+		for i, spec := range siemSpecs {
+			ste := ""
+			if strings.HasPrefix(spec, "webhook+") || strings.HasPrefix(spec, "splunk+") {
+				ste = te // the token goes only to the HTTP destination
+			}
+			sk, err := siem.Open(spec, siem.Options{Version: Version, Hostname: host, TokenEnv: ste, InsecureSkipVerify: siemInsecure})
+			if err != nil {
+				return usageErr("--siem #%d: %v", i+1, err)
+			}
+			defer sk.Close()
+			sinks = append(sinks, sk)
+		}
+		err = daemon.Run(ctx, daemon.Options{LogPath: logPath, PolicyDir: policies, NoEBPF: noEBPF, NoEnforce: noEnforce, Poll: poll,
+			Status: cmd.ErrOrStderr(), Detect: !noDetect, QuarantineThreats: quarantineThreats, SIEM: sinks})
 		if err != nil {
 			return ioErr(err)
 		}
@@ -75,11 +106,15 @@ process table and logs agents and their connections, but not files.`,
 		c.Flags().DurationVar(&poll, "poll", 5*time.Second, "poll interval without eBPF")
 		c.Flags().StringVar(&policies, "policies", "", "policy folder to apply (default /etc/authsec/policies, else ./policies; \"none\" to only observe)")
 		c.Flags().BoolVar(&noEnforce, "no-enforce", false, "log what policies would block, block nothing")
+		c.Flags().BoolVar(&noDetect, "no-detect", false, "turn off threat detections (ARTEX, offensive tools, connection fan-out)")
+		c.Flags().BoolVar(&quarantineThreats, "quarantine-threats", false, "quarantine an agent on a high-severity detection")
+		c.Flags().StringArrayVar(&siemSpecs, "siem", nil, "forward records to a SIEM: syslog+udp|tcp|tls://host:port, webhook+https://..., splunk+https://host:8088 (repeatable)")
+		c.Flags().StringVar(&siemTokenEnv, "siem-token-env", "AUTHSEC_SIEM_TOKEN", "environment variable holding the SIEM token (the name, never the value)")
+		c.Flags().BoolVar(&siemInsecure, "siem-insecure", false, "do not verify the SIEM's TLS certificate (testing only)")
 	}
 
 	cmd.AddCommand(runCmd,
-		&cobra.Command{Use: "install", Short: "Install and start the systemd service (root)", Args: cobra.NoArgs,
-			RunE: func(cmd *cobra.Command, _ []string) error { return installService(cmd.OutOrStdout(), logPath) }},
+		newDaemonInstallCmd(&logPath),
 		&cobra.Command{Use: "uninstall", Short: "Stop and remove the systemd service (root); the log is kept", Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error { return uninstallService(cmd.OutOrStdout()) }},
 		&cobra.Command{Use: "status", Short: "Show whether the service runs and what it logged", Args: cobra.NoArgs,
@@ -90,14 +125,73 @@ process table and logs agents and their connections, but not files.`,
 
 // unit is the systemd service. CPU and memory are capped: the sensor must
 // never be the thing slowing a machine down.
-func unit(bin, logPath string) string {
+func newDaemonInstallCmd(logPath *string) *cobra.Command {
+	var (
+		siemSpecs                   []string
+		tokenEnv                    string
+		quarantineThreats, noDetect bool
+	)
+	c := &cobra.Command{
+		Use:   "install",
+		Short: "Install and start the systemd service (root)",
+		Long: `Installs authsec-cli as a systemd service reading /etc/authsec/policies.
+A SIEM token goes in /etc/authsec/siem.env (root, mode 0600) as
+NAME=value, with NAME given by --siem-token-env; it is never written into the
+unit.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var extra []string
+			for _, spec := range siemSpecs {
+				if !(strings.HasPrefix(spec, "syslog+") || strings.HasPrefix(spec, "webhook+") || strings.HasPrefix(spec, "splunk+")) {
+					return usageErr("--siem: use syslog+udp|tcp|tls://, webhook+https:// or splunk+https://")
+				}
+				extra = append(extra, "--siem", spec)
+			}
+			if tokenEnv != "" {
+				extra = append(extra, "--siem-token-env", tokenEnv)
+			}
+			if quarantineThreats {
+				extra = append(extra, "--quarantine-threats")
+			}
+			if noDetect {
+				extra = append(extra, "--no-detect")
+			}
+			return installService(cmd.OutOrStdout(), *logPath, extra)
+		},
+	}
+	c.Flags().StringArrayVar(&siemSpecs, "siem", nil, "forward records to a SIEM (repeatable; see 'daemon --help')")
+	c.Flags().StringVar(&tokenEnv, "siem-token-env", "", "name of the token variable set in /etc/authsec/siem.env")
+	c.Flags().BoolVar(&quarantineThreats, "quarantine-threats", false, "quarantine an agent on a high-severity detection")
+	c.Flags().BoolVar(&noDetect, "no-detect", false, "turn off threat detections")
+	return c
+}
+
+// systemdQuote quotes one ExecStart argument.
+func systemdQuote(a string) string {
+	if a != "" && !strings.ContainsAny(a, " \t\"'\\$%;") {
+		return a
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", "$$", "%", "%%")
+	return `"` + r.Replace(a) + `"`
+}
+
+func unit(bin, logPath string, extra []string) string {
+	var args []string
+	for _, a := range extra {
+		args = append(args, systemdQuote(a))
+	}
+	tail := ""
+	if len(args) > 0 {
+		tail = " " + strings.Join(args, " ")
+	}
 	return fmt.Sprintf(`[Unit]
 Description=AuthSec Agent Kit (finds AI agents, logs what they do, enforces their policies)
 Documentation=https://authsec.ai
 After=network-online.target
 
 [Service]
-ExecStart=%s daemon run --log %s --policies /etc/authsec/policies
+ExecStart=%s daemon run --log %s --policies /etc/authsec/policies%s
+EnvironmentFile=-/etc/authsec/siem.env
 Restart=on-failure
 RestartSec=5
 Nice=10
@@ -110,10 +204,10 @@ ReadWritePaths=%s /sys/fs/cgroup /run/authsec
 
 [Install]
 WantedBy=multi-user.target
-`, bin, logPath, filepath.Dir(logPath))
+`, bin, logPath, tail, filepath.Dir(logPath))
 }
 
-func installService(w io.Writer, logPath string) error {
+func installService(w io.Writer, logPath string, extra []string) error {
 	if runtime.GOOS != "linux" {
 		return usageErr("daemon install supports systemd (Linux) for now; run 'authsec-cli daemon' under your service manager")
 	}
@@ -136,7 +230,7 @@ func installService(w io.Writer, logPath string) error {
 		}
 		fmt.Fprintf(w, "installed %s\n", installPath)
 	}
-	if err := os.WriteFile(unitPath, []byte(unit(installPath, logPath)), 0o644); err != nil {
+	if err := os.WriteFile(unitPath, []byte(unit(installPath, logPath, extra)), 0o644); err != nil {
 		return ioErr(err)
 	}
 	fmt.Fprintf(w, "wrote %s\n", unitPath)

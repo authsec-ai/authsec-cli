@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/authsec-ai/authsec-cli/internal/control"
+	"github.com/authsec-ai/authsec-cli/internal/detect"
 	"github.com/authsec-ai/authsec-cli/internal/enforce"
 	"github.com/authsec-ai/authsec-cli/internal/events"
 	"github.com/authsec-ai/authsec-cli/internal/policy"
@@ -37,9 +38,18 @@ type Options struct {
 	CgroupRoot  string        // default /sys/fs/cgroup
 	ResolvConf  string        // default /etc/resolv.conf
 	EnforceHook func(*enforce.Engine)
+	// Detect turns on threat detections; QuarantineThreats quarantines an
+	// agent on a high-severity detection (needs enforcement).
+	Detect            bool
+	QuarantineThreats bool
+	// SIEM receives every record of the types it forwards (siem.Open).
+	SIEM []Sink
 	// Tee receives every record (SIEM forwarding, control plane).
 	Tee func(events.Record)
 }
+
+// Sink forwards records (internal/siem).
+type Sink interface{ Send(events.Record) }
 
 type ctlCall struct {
 	req   control.Request
@@ -87,7 +97,14 @@ func Run(ctx context.Context, opt Options) error {
 		return fmt.Errorf("event log: %w", err)
 	}
 	defer w.Close()
-	w.Tee = opt.Tee
+	w.Tee = func(r events.Record) {
+		for _, s := range opt.SIEM {
+			s.Send(r)
+		}
+		if opt.Tee != nil {
+			opt.Tee(r)
+		}
+	}
 	write := func(r events.Record) {
 		if err := w.Write(r); err != nil {
 			fmt.Fprintln(opt.Status, "event log:", err)
@@ -176,7 +193,17 @@ func Run(ctx context.Context, opt Options) error {
 		opt.EnforceHook(eng)
 	}
 
-	deps := Deps{Get: proc.Get, Snapshot: proc.Take, HomeOf: homeOf,
+	threats := make(chan events.Record, 16)
+	released := map[int]uint64{} // instances an admin released: pid -> start time
+	deps := Deps{Get: proc.Get, Snapshot: proc.Take, HomeOf: homeOf, Detect: opt.Detect,
+		OnThreat: func(r events.Record) {
+			if opt.QuarantineThreats && r.Severity == "high" && r.Agent != nil {
+				select {
+				case threats <- r:
+				default:
+				}
+			}
+		},
 		Kill: func(pid int) error {
 			pr, err := os.FindProcess(pid)
 			if err != nil {
@@ -266,8 +293,33 @@ func Run(ctx context.Context, opt Options) error {
 		evs, dns = s.Events(), s.DNS()
 	}
 	var dropped uint64
+	containers := make(chan []string, 1)
+	listContainers := func() {
+		if !opt.Detect {
+			return
+		}
+		go func() {
+			select {
+			case containers <- detect.Containers():
+			default:
+			}
+		}()
+	}
+	listContainers()
 	for {
 		select {
+		case names := <-containers:
+			m.containerDetections(names)
+		case r := <-threats:
+			if start, ok := released[r.Agent.PID]; ok {
+				if now, alive := proc.StartTime(r.Agent.PID); alive && now == start {
+					continue // an admin released this instance: no automatic quarantine again
+				}
+				delete(released, r.Agent.PID)
+			}
+			if _, err := eng.Quarantine("", r.Agent.PID); err != nil {
+				write(events.Record{Type: events.Sensor, Agent: r.Agent, Note: "could not quarantine after detection " + r.Rule + ": " + err.Error()})
+			}
 		case <-ctx.Done():
 			write(events.Record{Type: events.Sensor, Note: "stopped; enforcement lifted"})
 			return nil
@@ -286,6 +338,15 @@ func Run(ctx context.Context, opt Options) error {
 			eng.DNS(r.host, r.ips, 10*time.Minute)
 		case c := <-calls:
 			resp := handleCall(c, eng, m, write, func() { policyStamp = dirStamp(opt.PolicyDir); loadPolicies("reload"); resolveHosts() })
+			if c.req.Op == control.OpRelease && resp.OK {
+				for _, a := range m.Agents() {
+					if a.PID == c.req.PID || (c.req.Agent != "" && a.ID == c.req.Agent) {
+						if st, ok := proc.StartTime(a.PID); ok {
+							released[a.PID] = st
+						}
+					}
+				}
+			}
 			c.reply <- resp
 		case <-flush.C:
 			if err := eng.Flush(); err != nil {
@@ -310,6 +371,7 @@ func Run(ctx context.Context, opt Options) error {
 				}
 			}
 		case <-slow.C:
+			listContainers()
 			for ip, h := range recognise.ResolveLLMHosts(ctx, nil) {
 				m.llm[ip] = h
 			}

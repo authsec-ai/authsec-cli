@@ -89,3 +89,20 @@ func TestEveryErrorIsPrinted(t *testing.T) {
 		t.Errorf("empty policy folder: %v", err)
 	}
 }
+
+func TestDay5CLIHelpers(t *testing.T) {
+	if got := termSafe("ok\x1b[2Jfake\nline x"); strings.ContainsAny(got, "\x1b\n ") {
+		t.Errorf("termSafe kept control characters: %q", got)
+	}
+	t.Setenv("AUTHSEC_TEST_TOKEN", "")
+	if _, err := tokenEnvFor(true, "AUTHSEC_TEST_TOKEN"); err == nil {
+		t.Error("an explicit, unset token variable was accepted")
+	}
+	if te, err := tokenEnvFor(false, "AUTHSEC_TEST_TOKEN"); err != nil || te != "" {
+		t.Errorf("default, unset: %q %v", te, err)
+	}
+	u := unit("/usr/local/bin/authsec-cli", "/var/lib/authsec/events.jsonl", []string{"--siem", "webhook+https://h/p?a=1&b=$X%", "--quarantine-threats"})
+	if !strings.Contains(u, `"webhook+https://h/p?a=1&b=$$X%%"`) || !strings.Contains(u, "EnvironmentFile=-/etc/authsec/siem.env") || !strings.Contains(u, "--quarantine-threats") {
+		t.Errorf("unit:\n%s", u)
+	}
+}

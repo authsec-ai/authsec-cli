@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/authsec-ai/authsec-cli/internal/detect"
 	"github.com/authsec-ai/authsec-cli/internal/events"
 	"github.com/authsec-ai/authsec-cli/internal/policy"
 	"github.com/authsec-ai/authsec-cli/internal/proc"
@@ -34,6 +35,11 @@ type Deps struct {
 	Kill func(pid int) error
 	// HomeOf is a user's home directory, for {home} in policies.
 	HomeOf func(user string) string
+	// Detect turns on the threat detections (ARTEX, offensive tools,
+	// connection fan-out).
+	Detect bool
+	// OnThreat is told of every detection record (auto-quarantine).
+	OnThreat func(events.Record)
 }
 
 // Enforcer is what the monitor needs from the enforcement engine
@@ -73,6 +79,7 @@ type Monitor struct {
 	member  map[int]int           // pid -> agent top pid
 	checked map[int]time.Time
 	seen    map[string]time.Time
+	fanout  *detect.FanOut
 }
 
 // NewMonitor returns a monitor writing records to out. llm maps LLM API
@@ -90,9 +97,13 @@ func NewMonitor(deps Deps, out func(events.Record), llm map[string]string) *Moni
 	if llm == nil {
 		llm = map[string]string{}
 	}
-	return &Monitor{deps: deps, out: out, llm: llm, dns: map[string]dnsEntry{},
+	m := &Monitor{deps: deps, out: out, llm: llm, dns: map[string]dnsEntry{},
 		agents: map[int]*events.Agent{}, kernel: map[int]bool{}, member: map[int]int{},
 		checked: map[int]time.Time{}, seen: map[string]time.Time{}}
+	if deps.Detect {
+		m.fanout = detect.NewFanOut(detect.DefaultFanOutWindow, detect.DefaultFanOutThreshold)
+	}
+	return m
 }
 
 // Agents returns the agents being followed.
@@ -120,6 +131,9 @@ func (m *Monitor) Members(top int) []int {
 func (m *Monitor) Seed(snap *proc.Snapshot) {
 	for _, a := range recognise.Recognise(snap, recognise.Options{LLMAddrs: m.llm}) {
 		m.start(a, "running when the sensor started")
+	}
+	if m.deps.Detect {
+		m.sweepARTEX(snap)
 	}
 }
 
@@ -155,6 +169,9 @@ func (m *Monitor) Reconcile(snap *proc.Snapshot, polling bool) {
 				m.network(root, c.PID, c.RemoteIP, c.RemotePort)
 			}
 		}
+	}
+	if m.deps.Detect {
+		m.sweepARTEX(snap)
 	}
 	// Forget dedupe keys and checks that have expired.
 	now := m.deps.Now()
@@ -230,6 +247,14 @@ func (m *Monitor) HandleDNS(a sensor.DNSAnswer) {
 
 func (m *Monitor) exec(ev sensor.Event) {
 	root, isMember := m.member[ev.PID]
+	if isMember && ev.PID != root {
+		// A member's pid reused by an unrelated process: its parent is not
+		// in the same agent. The membership is stale.
+		if r, ok := m.member[ev.PPID]; !ok || r != root {
+			delete(m.member, ev.PID)
+			isMember = false
+		}
+	}
 	if !isMember {
 		if r, ok := m.member[ev.PPID]; ok {
 			root, isMember = r, true
@@ -296,6 +321,10 @@ func (m *Monitor) start(a recognise.Agent, note string) {
 	}
 	m.out(events.Record{Time: m.deps.Now(), Type: events.AgentStarted, Agent: ref, PID: a.PID, Exe: a.Exe, Args: a.Args,
 		Via: a.Via, Version: a.Version, Evidence: a.Evidence, Threat: a.Threat, Note: note})
+	if m.deps.Detect && a.Threat && note != "found by the ARTEX detection" {
+		m.detection(&detect.Detection{Rule: detect.RuleARTEX, Severity: detect.High, PID: a.PID, AgentID: a.ID,
+			Title: a.Name + " is running", Evidence: a.Evidence}, ref)
+	}
 	if m.deps.Enforcer != nil {
 		pids := []int{a.PID}
 		for _, c := range a.Children {
@@ -326,6 +355,9 @@ func (m *Monitor) process(root int, p *proc.Process) {
 	args := recognise.ScrubArgs(p.Args)
 	m.out(events.Record{Time: m.deps.Now(), Type: events.Process, Agent: a, PID: p.PID, Comm: p.Comm,
 		Exe: p.Exe, Args: args})
+	if m.deps.Detect {
+		m.detectProcess(a, p)
+	}
 	if m.deps.Enforcer == nil || len(p.Args) == 0 {
 		return
 	}
@@ -419,6 +451,9 @@ func (m *Monitor) network(root, pid int, ip net.IP, port int) {
 	}
 	d := m.dst(ip, port)
 	m.decideNetwork(root, pid, d)
+	if m.deps.Detect {
+		m.detectConnection(a, d.IP, d.Port)
+	}
 	key := fmt.Sprintf("n|%d|%s|%d", root, d.IP, d.Port)
 	if !m.once(key, netWindow) {
 		return
