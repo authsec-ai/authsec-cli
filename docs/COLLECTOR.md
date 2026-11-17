@@ -37,7 +37,11 @@ console's `docker run` command.
 Branch `feat/collector-workload-identity` (authsec, off `experimental`)
 fixes 1-3 and 5. With it, the full chain runs with no hand-made rows: host activity
 → workload on the collector's estate → drafted policy → approve, publish →
-delivered to the right agent → receipt.
+delivered to the right agent → receipt. Rerun on 2026-11-17 with both fixes:
+the draft's review rule for `sleep` reached the collector as a deny for
+`sleep` only (`commands.deny: [sleep, "sleep *"]`), not for every program.
+The branch also merges activity across several processes of one agent (two
+sessions of the same tool), which used to keep only one session's.
 
 1. **Fixed on the branch: no target process.** Receipt mappings are always
    empty, so a host with several agents could not place a policy. Each
