@@ -29,6 +29,13 @@ import (
 //go:embed decision.rego
 var decisionRego []byte
 
+// decisionRegoExecPath is the same template with exec rules matched by
+// program path (authsec fix "exec rules keep their program path"); an exec
+// rule without a path still covers every program.
+//
+//go:embed decision_exec_path.rego
+var decisionRegoExecPath []byte
+
 // Manifest is the detached, signed claim over a delivery (the server's
 // sign.Manifest; same fields, same order, so it re-encodes byte for byte).
 type Manifest struct {
@@ -164,6 +171,11 @@ type Data struct {
 		WorkloadIDs []string `json:"workload_ids"`
 	} `json:"targets"`
 	Rules []DataRule `json:"rules"`
+
+	// ExecByPath is set when the bundle's template matches exec rules by
+	// program path. Under the original template an exec rule matches every
+	// program, whatever path it names.
+	ExecByPath bool `json:"-"`
 }
 
 // DataRule is one typed rule.
@@ -219,7 +231,12 @@ func OpenBundle(tarGz []byte) (*Data, error) {
 	if !ok {
 		return nil, errors.New("bundle has no policy.rego")
 	}
-	if !bytes.Equal(bytes.TrimSpace(rego), bytes.TrimSpace(decisionRego)) {
+	execByPath := false
+	switch {
+	case bytes.Equal(bytes.TrimSpace(rego), bytes.TrimSpace(decisionRego)):
+	case bytes.Equal(bytes.TrimSpace(rego), bytes.TrimSpace(decisionRegoExecPath)):
+		execByPath = true
+	default:
 		return nil, errors.New("bundle's policy.rego is not the pinned authsec.runtime.v1 template: refused")
 	}
 	raw, ok := files["data.json"]
@@ -230,6 +247,7 @@ func OpenBundle(tarGz []byte) (*Data, error) {
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil, fmt.Errorf("data.json: %v", err)
 	}
+	d.ExecByPath = execByPath
 	for _, r := range d.Rules {
 		switch r.Effect {
 		case "allow", "deny", "require_approval":
@@ -267,6 +285,7 @@ type Controls struct {
 	} `json:"egress"`
 	Exec []struct {
 		RuleID string `json:"rule_id"`
+		Path   string `json:"path,omitempty"` // path-aware template only
 		Effect string `json:"effect"`
 	} `json:"exec"`
 	Admission []struct {

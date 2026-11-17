@@ -3,6 +3,7 @@ package collector
 import (
 	"fmt"
 	"net"
+	"path"
 	"sort"
 	"strings"
 
@@ -40,7 +41,8 @@ type Translation struct {
 //   - network.connect rules match by resource; the controls artifact
 //     resolved each resource to an address and port (egress);
 //   - file.* rules match a path, or a prefix written path/**;
-//   - exec rules match every program;
+//   - exec rules match every program, or under the path-aware template
+//     only the program at their path (Data.ExecByPath);
 //   - secret.read, admission and broker have no host enforcement here and
 //     are reported unsupported.
 //
@@ -102,26 +104,9 @@ func Translate(agentID, mode string, d *Data, c *Controls, controlsSHA string) (
 	}
 	receipt(ctlEgress, state, fmt.Sprintf("nftables per agent cgroup: %d allowed, %d denied, others denied", len(p.Network.Allow), len(p.Network.Deny)))
 
-	// Exec: the most restrictive exec rule decides for every program.
-	execEffect := ""
-	for _, r := range d.Rules {
-		if r.Action != "exec" {
-			continue
-		}
-		if rank(r.Effect) > rank(execEffect) {
-			execEffect = r.Effect
-		}
-	}
-	switch execEffect {
-	case "allow":
-		p.Commands.Default = policy.Allow
-	case "require_approval":
-		p.Commands.Default = policy.Allow
-		p.Commands.Ask = []string{"*"}
-	default: // deny, or no exec rule: default deny
-		p.Commands.Default = policy.Deny
-	}
-	receipt(ctlExec, state, "programs the agent starts: "+orDefault(execEffect, "default deny"))
+	// Exec.
+	execTest := translateExec(p, d, t)
+	receipt(ctlExec, state, "programs the agent starts: "+execTest)
 
 	// Filesystem: rules from data.json (they carry the action), baseline
 	// paths read-only.
@@ -183,6 +168,91 @@ func Translate(agentID, mode string, d *Data, c *Controls, controlsSHA string) (
 	}
 	t.Document = doc
 	return t, nil
+}
+
+// translateExec maps exec rules onto command rules. An exec rule without a
+// path (or any exec rule, under the original template) covers every
+// program, and the most restrictive of those decides for all of them. A rule
+// with a path is about that program: commands match program names, so
+// /usr/bin/zsh becomes "zsh" and "zsh *". Template precedence holds: deny
+// beats require_approval beats allow, and a program no rule matches is
+// denied.
+func translateExec(p *policy.Policy, d *Data, t *Translation) string {
+	every := ""
+	var named []DataRule
+	for _, r := range d.Rules {
+		if r.Action != "exec" {
+			continue
+		}
+		if d.ExecByPath && r.Path != "" {
+			named = append(named, r)
+			continue
+		}
+		if rank(r.Effect) > rank(every) {
+			every = r.Effect
+		}
+	}
+	switch every {
+	case "deny":
+		// Every program matches a deny: nothing else can allow one.
+		p.Commands.Default = policy.Deny
+		return "deny (every program)"
+	case "require_approval":
+		p.Commands.Default = policy.Allow
+		p.Commands.Ask = []string{"*"}
+	case "allow":
+		p.Commands.Default = policy.Allow
+	default:
+		p.Commands.Default = policy.Deny
+	}
+	var allow, ask, deny []string
+	for _, r := range named {
+		if strings.HasSuffix(r.Path, "/**") || strings.HasSuffix(r.Path, "/") {
+			t.Notes = append(t.Notes, fmt.Sprintf("exec rule %s names the programs under %s; commands are matched by program name, so it is not applied", r.ID, r.Path))
+			continue
+		}
+		name := strings.ReplaceAll(path.Base(r.Path), "*", `\*`)
+		if name == "" || name == "." || name == "/" {
+			t.Notes = append(t.Notes, fmt.Sprintf("exec rule %s has no program name in %q; not applied", r.ID, r.Path))
+			continue
+		}
+		pats := []string{name, name + " *"}
+		switch r.Effect {
+		case "deny":
+			deny = append(deny, pats...)
+		case "require_approval":
+			ask = append(ask, pats...)
+		default:
+			allow = append(allow, pats...)
+		}
+	}
+	if every == "" || every == "allow" {
+		// Under an every-program allow, a named allow changes nothing.
+		if every == "" {
+			p.Commands.Allow = dedupe(allow)
+		}
+		p.Commands.Ask = dedupe(ask)
+	}
+	p.Commands.Deny = dedupe(deny)
+	if every == "" {
+		return fmt.Sprintf("%d programs allowed, %d need approval, %d denied, others denied", len(p.Commands.Allow)/2, len(p.Commands.Ask)/2, len(p.Commands.Deny)/2)
+	}
+	return fmt.Sprintf("%s (every program), %d denied by name", every, len(p.Commands.Deny)/2)
+}
+
+func dedupe(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := in[:0]
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func rank(effect string) int {

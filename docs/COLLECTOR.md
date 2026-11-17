@@ -35,7 +35,7 @@ console's `docker run` command.
 ## Gaps found on the server (`experimental`)
 
 Branch `feat/collector-workload-identity` (authsec, off `experimental`)
-fixes 1-3. With it, the full chain runs with no hand-made rows: host activity
+fixes 1-3 and 5. With it, the full chain runs with no hand-made rows: host activity
 → workload on the collector's estate → drafted policy → approve, publish →
 delivered to the right agent → receipt.
 
@@ -54,14 +54,23 @@ delivered to the right agent → receipt.
    by full argv, so a per-session id (Claude Code `--resume=<id>`) made a new
    agent each session. The collector replaces UUIDs and long hex ids in argv
    with `<id>`.
-5. **Exec rules lose their program.** The drafter writes one exec rule per
-   program (with `path`), but the pinned template matches `exec` on the action
-   alone, and the controls artifact drops the path. One review rule for `zsh`
-   therefore means "deny every program". The collector follows the signed
-   template.
+5. **Fixed on the branch: exec rules lost their program.** The drafter writes
+   one exec rule per program (with `path`), but the compiler dropped the path
+   and the pinned template matched `exec` on the action alone, so one review
+   rule for `zsh` meant "deny every program". The path now reaches `data.json`
+   and the controls artifact, and the template matches a path-scoped exec rule
+   only for that program; an exec rule without a path still covers every
+   program. This changes the pinned template's text, so the collector accepts
+   both the original template (paths ignored, as before) and the path-aware
+   one, and maps a named program to command rules (`zsh`, `zsh *`). A rule for
+   a folder of programs (`/opt/tools/**`) is reported, not applied: commands
+   are matched by program name.
 6. **The drafter's review denies include the agent's own model API**
-   (`api.anthropic.com` for Claude Code). Enforced as drafted, that cuts the
-   agent off.
+   (`api.anthropic.com` for Claude Code). Every internet destination and every
+   program goes to review, and review items become deny rules on purpose (so
+   they are visible and edited before publishing). Enforced as drafted, that
+   cuts the agent off. Whether the agent's own model API should be drafted as
+   an allow is a product decision, so it is left as is.
 7. **`IGA_POLICY_SIGNING_KEY_PEM` is a file path**, not PEM text. Unset or
    wrong, publish answers 503 and enrollment returns no policy keys.
 8. **No real capability digest is certified** in `linux-managed-v1`, so only

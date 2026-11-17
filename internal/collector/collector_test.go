@@ -309,3 +309,67 @@ func TestStableArgv(t *testing.T) {
 		t.Errorf("%v, want %v", got, want)
 	}
 }
+
+// The path-aware template is accepted too, and tells Translate so.
+func TestOpenBundleExecPathTemplate(t *testing.T) {
+	d, err := OpenBundle(bundle(t, map[string]string{"policy.rego": string(decisionRegoExecPath), "data.json": dataJSON}))
+	if err != nil || !d.ExecByPath {
+		t.Fatalf("path-aware template: %+v %v", d, err)
+	}
+	d, err = OpenBundle(bundle(t, map[string]string{"policy.rego": string(decisionRego), "data.json": dataJSON}))
+	if err != nil || d.ExecByPath {
+		t.Fatalf("original template: %+v %v", d, err)
+	}
+}
+
+func TestTranslateExecRules(t *testing.T) {
+	c, err := ParseControls([]byte(controlsJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := func(rs ...DataRule) *Data { return &Data{Rules: rs, ExecByPath: true} }
+	zsh := DataRule{ID: "z", Action: "exec", Path: "/usr/bin/zsh", Effect: "deny"}
+	git := DataRule{ID: "g", Action: "exec", Path: "/usr/bin/git", Effect: "allow"}
+	sudo := DataRule{ID: "s", Action: "exec", Path: "/usr/bin/sudo", Effect: "require_approval"}
+	every := func(effect string) DataRule { return DataRule{ID: "e-" + effect, Action: "exec", Effect: effect} }
+
+	cases := []struct {
+		name string
+		d    *Data
+		cmd  string
+		want string
+	}{
+		// The bug: one review deny for zsh denied every program.
+		{"named deny is only that program", rules(zsh, git), "git status", policy.Allow},
+		{"named deny", rules(zsh, git), "zsh -c true", policy.Deny},
+		{"no rule for it: default deny", rules(zsh, git), "curl x", policy.Deny},
+		{"named approval", rules(sudo), "sudo ls", policy.Ask},
+		{"every allow, named deny", rules(every("allow"), zsh), "zsh", policy.Deny},
+		{"every allow", rules(every("allow"), zsh), "ls -la", policy.Allow},
+		{"every deny beats a named allow", rules(every("deny"), git), "git status", policy.Deny},
+		{"every approval, named deny", rules(every("require_approval"), zsh), "zsh", policy.Deny},
+		{"every approval", rules(every("require_approval"), git), "git status", policy.Ask},
+		// Under the original template a path does not narrow an exec rule.
+		{"original template: deny covers all", &Data{Rules: []DataRule{zsh, git}}, "git status", policy.Deny},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, err := Translate("claude-code", "enforce", tc.d, c, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, issues := policy.Parse(tr.Document)
+			if p == nil {
+				t.Fatalf("document: %v\n%s", issues, tr.Document)
+			}
+			if got := p.DecideCommand(tc.cmd).Action; got != tc.want {
+				t.Fatalf("%q: got %s, want %s\n%s", tc.cmd, got, tc.want, tr.Document)
+			}
+		})
+	}
+
+	tr, err := Translate("claude-code", "enforce", rules(DataRule{ID: "t", Action: "exec", Path: "/opt/tools/**", Effect: "allow"}), c, "")
+	if err != nil || len(tr.Notes) == 0 || !strings.Contains(tr.Notes[0], "/opt/tools/**") {
+		t.Fatalf("a folder rule must be reported, not guessed: %v %v", tr.Notes, err)
+	}
+}
