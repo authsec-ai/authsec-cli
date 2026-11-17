@@ -34,23 +34,38 @@ console's `docker run` command.
 
 ## Gaps found on the server (`experimental`)
 
-1. **The server does not say which local process a delivery is for.** Receipt
-   mappings are always empty. A host with several agents cannot place a
-   policy. Branch `feat/collector-workload-identity` (authsec, off
-   `experimental`) adds `workload` (exe, argv, unit, path, container_id) to each
-   desired binding, from the adopted discovered agent.
-2. **Host observations never become activity.** `ActivityProjector` is never
-   called, so host agents get no `metadata.activity`. That means no workload,
-   and no auto-drafted policy. In the test the workload was inserted as
-   `ensureActivityWorkload` would.
-3. **A workload with no estate scope is published to the first active
-   collector by id**, which may be any machine in the workspace.
-4. **Host agents are fingerprinted by full argv.** Agents whose argv carries a
-   session id (Claude Code `--resume=<id>`) become a new discovered agent each
-   session.
-5. **`IGA_POLICY_SIGNING_KEY_PEM` is a file path**, not PEM text. Unset or
+Branch `feat/collector-workload-identity` (authsec, off `experimental`)
+fixes 1-3. With it, the full chain runs with no hand-made rows: host activity
+→ workload on the collector's estate → drafted policy → approve, publish →
+delivered to the right agent → receipt.
+
+1. **Fixed on the branch: no target process.** Receipt mappings are always
+   empty, so a host with several agents could not place a policy. Each
+   desired binding now carries `workload` (exe, argv, unit, path,
+   container_id) from the adopted discovered agent.
+2. **Fixed on the branch: host activity was never used.** `ActivityProjector`
+   is never called. The host projector now puts a process object's recent
+   observations on the agent as `metadata.activity`, in the drafter's format,
+   and attributes the agent to its collector.
+3. **Fixed on the branch: no estate on host workloads.** A workload without an
+   estate was published to the first active collector by id. It now takes its
+   collector's estate.
+4. **Fixed in the collector: argv fingerprint.** Host agents are fingerprinted
+   by full argv, so a per-session id (Claude Code `--resume=<id>`) made a new
+   agent each session. The collector replaces UUIDs and long hex ids in argv
+   with `<id>`.
+5. **Exec rules lose their program.** The drafter writes one exec rule per
+   program (with `path`), but the pinned template matches `exec` on the action
+   alone, and the controls artifact drops the path. One review rule for `zsh`
+   therefore means "deny every program". The collector follows the signed
+   template.
+6. **The drafter's review denies include the agent's own model API**
+   (`api.anthropic.com` for Claude Code). Enforced as drafted, that cuts the
+   agent off.
+7. **`IGA_POLICY_SIGNING_KEY_PEM` is a file path**, not PEM text. Unset or
    wrong, publish answers 503 and enrollment returns no policy keys.
-6. **No real capability digest is certified** in `linux-managed-v1`, so only
+8. **No real capability digest is certified** in `linux-managed-v1`, so only
    observe can be published to a real collector.
-7. The credential lasts 24 hours. A collector that does not rotate fails with
-   "credential rejected", which matches the report's host collector failure.
+9. **The credential lasts 24 hours.** A collector that does not rotate fails
+   with "credential rejected", which matches the report's host collector
+   failure. authsec-cli rotates it.

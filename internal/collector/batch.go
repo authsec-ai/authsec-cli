@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ func objectFor(a events.Agent, p *proc.Process) Object {
 		if p.Exe != "" {
 			native["exe"] = p.Exe
 		}
-		if args := recognise.ScrubArgs(p.Args); len(args) > 0 {
+		if args := stableArgv(recognise.ScrubArgs(p.Args)); len(args) > 0 {
 			native["argv"] = args
 		}
 		if p.Comm != "" {
@@ -54,6 +55,20 @@ func objectFor(a events.Agent, p *proc.Process) Object {
 		native["systemd_unit"] = unit
 	}
 	return Object{Ref: fmt.Sprintf("o_p%d", a.PID), Kind: "linux.process_group", Native: native, Attributes: attrs}
+}
+
+// volatileID matches values that change from one run of the same agent to
+// the next: UUIDs (session, conversation and request ids) and long hex ids.
+var volatileID = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{24,}\b`)
+
+// stableArgv replaces per-run ids in argv with <id>. The server fingerprints
+// a host agent by its argv, so without this every session of an agent
+// started with --resume=<uuid> (Claude Code) would be a new agent.
+func stableArgv(args []string) []string {
+	for i, a := range args {
+		args[i] = volatileID.ReplaceAllString(a, "<id>")
+	}
+	return args
 }
 
 // systemdUnit is the .service an agent runs in, from its cgroup ("" when

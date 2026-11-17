@@ -301,3 +301,11 @@ func TestStateFileIsPrivate(t *testing.T) {
 }
 
 func chmod(p string, m uint32) error { return osChmod(p, m) }
+
+func TestStableArgv(t *testing.T) {
+	got := stableArgv([]string{"claude", "--resume=6cf0edc4-bc04-4f4b-ae9c-15c7d0b236f5", "--session", "0123456789abcdef0123456789abcdef", "--port", "8080", "deadbeef"})
+	want := []string{"claude", "--resume=<id>", "--session", "<id>", "--port", "8080", "deadbeef"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("%v, want %v", got, want)
+	}
+}
