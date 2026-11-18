@@ -80,6 +80,12 @@ only. Elsewhere, or without root, it polls the process table. The service is
 capped at 128 MB and 20% CPU; measured use is about 22 MB and under 2% of one
 core.
 
+**Platforms:** Linux is the full product (sensor, daemon, enforcement,
+quarantine, console). On macOS, discovery, scanning, policies and the Claude
+Code hook work; the daemon polls the process table and does not enforce. The
+Windows binary is a preview: only parts of discovery are tested there, and
+scanning has known gaps.
+
 **Secrets:** never read or printed. Environment variables and headers are kept
 by name; command lines, URLs and arguments are scrubbed. The event log is 0600.
 

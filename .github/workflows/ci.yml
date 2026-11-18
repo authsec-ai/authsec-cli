@@ -18,7 +18,19 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test ./...
+      - name: go test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            # Windows is a preview: the daemon, enforcement, policies, the
+            # console link and the collector are Linux (and macOS) only, and
+            # scanning on Windows has known gaps (README, Platforms).
+            # Test the packages that hold on Windows; the full suite runs on
+            # Linux and macOS.
+            go test ./internal/access/... ./internal/cloud/... ./internal/collect/... ./internal/detect/... ./internal/parse/... ./internal/recognise/... ./internal/rules/...
+          else
+            go test ./...
+          fi
       - run: go build ./cmd/authsec-cli
   lint:
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -61,14 +62,15 @@ func DefaultStateDir() string {
 func statePath(dir string) string { return filepath.Join(dir, "collector.json") }
 
 // LoadState reads the state, or os.ErrNotExist before enrollment. A file
-// others can read is refused.
+// others can read is refused (by its mode bits; Windows has none, and its
+// ACLs are not read here).
 func LoadState(dir string) (*State, error) {
 	p := statePath(dir)
 	st, err := os.Lstat(p)
 	if err != nil {
 		return nil, err
 	}
-	if !st.Mode().IsRegular() || st.Mode().Perm()&0o077 != 0 {
+	if !st.Mode().IsRegular() || (runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0) {
 		return nil, fmt.Errorf("%s must be a regular file readable by its owner only", p)
 	}
 	b, err := os.ReadFile(p)

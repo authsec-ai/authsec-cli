@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +292,9 @@ func TestStateFileIsPrivate(t *testing.T) {
 	}
 	if _, err := LoadState(dir); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		return // no mode bits to refuse by
 	}
 	if err := chmod(statePath(dir), 0o644); err != nil {
 		t.Fatal(err)

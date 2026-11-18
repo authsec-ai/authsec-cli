@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -238,7 +239,7 @@ ReadWritePaths=-%s -%s /sys/fs/cgroup /run/authsec
 
 [Install]
 WantedBy=multi-user.target
-`, bin, logPath, tail, filepath.Dir(logPath), connDir)
+`, bin, logPath, tail, path.Dir(filepath.ToSlash(logPath)), connDir)
 }
 
 // connDir is the root connection folder (link.Dir as root).

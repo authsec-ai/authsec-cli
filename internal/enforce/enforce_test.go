@@ -545,8 +545,8 @@ agent: {id: claude-code}
 mode: enforce
 network: {default: deny}
 filesystem:
-  read_write: ["`+filepath.Join(link, "proj")+`"]
-  deny: ["`+filepath.Join(link, "secret")+`"]
+  read_write: ['`+filepath.Join(link, "proj")+`']
+  deny: ['`+filepath.Join(link, "secret")+`']
 commands: {default: allow}
 mcp_servers: {default: deny}
 `)
