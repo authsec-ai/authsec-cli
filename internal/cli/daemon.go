@@ -231,12 +231,18 @@ CPUQuota=20%%
 RuntimeDirectory=authsec
 ProtectHome=read-only
 ProtectSystem=full
-ReadWritePaths=%s /sys/fs/cgroup /run/authsec
+# The folders the daemon writes: its log and state, and the connection
+# folder (the console's actuation credential). '-' keeps a missing one from
+# stopping the service (status 226/NAMESPACE); install creates them.
+ReadWritePaths=-%s -%s /sys/fs/cgroup /run/authsec
 
 [Install]
 WantedBy=multi-user.target
-`, bin, logPath, tail, filepath.Dir(logPath))
+`, bin, logPath, tail, filepath.Dir(logPath), connDir)
 }
+
+// connDir is the root connection folder (link.Dir as root).
+const connDir = "/etc/authsec"
 
 func installService(w io.Writer, logPath string, extra []string) error {
 	if runtime.GOOS != "linux" {
@@ -260,6 +266,16 @@ func installService(w io.Writer, logPath string, extra []string) error {
 			return ioErr(fmt.Errorf("copy binary to %s: %w", installPath, err))
 		}
 		fmt.Fprintf(w, "installed %s\n", installPath)
+	}
+	// The unit makes these writable; systemd refuses to start a service whose
+	// ReadWritePaths are missing, so they exist before it starts.
+	for _, d := range []struct {
+		path string
+		mode os.FileMode
+	}{{filepath.Dir(logPath), 0o755}, {connDir, 0o755}, {SystemPolicyDir, 0o755}} {
+		if err := os.MkdirAll(d.path, d.mode); err != nil {
+			return ioErr(fmt.Errorf("create %s: %w", d.path, err))
+		}
 	}
 	if err := os.WriteFile(unitPath, []byte(unit(installPath, logPath, extra)), 0o644); err != nil {
 		return ioErr(err)

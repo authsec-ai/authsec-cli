@@ -105,4 +105,10 @@ func TestDay5CLIHelpers(t *testing.T) {
 	if !strings.Contains(u, `"webhook+https://h/p?a=1&b=$$X%%"`) || !strings.Contains(u, "EnvironmentFile=-/etc/authsec/siem.env") || !strings.Contains(u, "--quarantine-threats") {
 		t.Errorf("unit:\n%s", u)
 	}
+	// A missing folder must not stop the service (226/NAMESPACE on a fresh
+	// machine), and the connection folder is writable for the actuation
+	// credential (ProtectSystem=full makes /etc read-only).
+	if !strings.Contains(u, "ReadWritePaths=-/var/lib/authsec -/etc/authsec /sys/fs/cgroup /run/authsec") {
+		t.Errorf("unit writable paths:\n%s", u)
+	}
 }
