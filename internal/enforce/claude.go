@@ -125,11 +125,38 @@ func decidePath(ep *policy.Policy, cwd, path string, write bool) HookDecision {
 	}
 	d := ep.DecideFile(path, write)
 	if resolved != path {
-		if r := ep.DecideFile(resolved, write); r.Action != policy.Allow {
+		// The resolved path is judged against the policy's paths resolved too:
+		// a project reached through a link (/var -> /private/var on macOS, a
+		// symlinked home) is still the project.
+		if r := withResolvedPaths(ep).DecideFile(resolved, write); r.Action != policy.Allow {
 			return HookDecision{Decision: policy.Decision{Action: r.Action, Rule: r.Rule + " (via a link to " + resolved + ")"}, Kind: "file", What: path}
 		}
 	}
 	return HookDecision{Decision: d, Kind: "file", What: path}
+}
+
+// withResolvedPaths is the policy with each filesystem path also listed as
+// the path its links lead to. Deny lists grow too, so a link cannot take a
+// denied folder out of reach of its rule.
+func withResolvedPaths(p *policy.Policy) *policy.Policy {
+	cp := *p
+	cp.Filesystem.ReadWrite = addResolved(p.Filesystem.ReadWrite)
+	cp.Filesystem.ReadOnly = addResolved(p.Filesystem.ReadOnly)
+	cp.Filesystem.Deny = addResolved(p.Filesystem.Deny)
+	return &cp
+}
+
+func addResolved(paths []string) []string {
+	out := append([]string(nil), paths...)
+	for _, x := range paths {
+		if !filepath.IsAbs(x) {
+			continue
+		}
+		if r, err := resolvePath(x); err == nil && r != x {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // magicPath: /proc/<pid>/{root,cwd,fd,map_files} and /dev/fd reach any file

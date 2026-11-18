@@ -523,3 +523,39 @@ func TestScriptNormalisesOverlaps(t *testing.T) {
 		}
 	}
 }
+
+// A project reached through a symlink (macOS /var -> /private/var, a linked
+// home) is still the project; a denied folder behind a link is still denied.
+func TestClaudeHookFollowsLinkedProject(t *testing.T) {
+	real := t.TempDir()
+	proj := filepath.Join(real, "proj")
+	secret := filepath.Join(real, "secret")
+	for _, d := range []string{filepath.Join(proj, ".git"), secret} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(t.TempDir(), "via")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks: %v", err)
+	}
+	p := mustPolicy(t, `apiVersion: authsec.ai/v1
+kind: AgentPolicy
+agent: {id: claude-code}
+mode: enforce
+network: {default: deny}
+filesystem:
+  read_write: ["`+filepath.Join(link, "proj")+`"]
+  deny: ["`+filepath.Join(link, "secret")+`"]
+commands: {default: allow}
+mcp_servers: {default: deny}
+`)
+	in := HookInput{Cwd: filepath.Join(link, "proj"), ToolName: "Edit", ToolInput: map[string]any{"file_path": "main.go"}}
+	if d := DecideClaudeTool(p, in, "/home/u"); d.Action != policy.Allow {
+		t.Errorf("edit in the linked project: %+v", d)
+	}
+	in = HookInput{Cwd: proj, ToolName: "Read", ToolInput: map[string]any{"file_path": filepath.Join(secret, "k")}}
+	if d := DecideClaudeTool(p, in, "/home/u"); d.Action != policy.Deny {
+		t.Errorf("read of the denied folder by its real path: %+v", d)
+	}
+}

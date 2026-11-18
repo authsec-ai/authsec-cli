@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -170,7 +171,11 @@ func (f *fakePlane) handler(t *testing.T) http.Handler {
 
 func TestLinkEndToEnd(t *testing.T) {
 	home := t.TempDir()
+	// The user config folder on every OS (Linux XDG_CONFIG_HOME, macOS
+	// $HOME/Library/Application Support, Windows %AppData%), never the real one.
 	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("HOME", home)
+	t.Setenv("AppData", home)
 	if os.Geteuid() == 0 {
 		t.Skip("Dir() is /etc/authsec as root")
 	}
@@ -218,7 +223,11 @@ func TestLinkEndToEnd(t *testing.T) {
 	if !actTokenRe.MatchString(f.offered) {
 		t.Errorf("offered actuation credential %q", f.offered)
 	}
-	if st, err := os.Stat(filepath.Join(home, "authsec", "actuation.token")); err != nil || st.Mode().Perm() != 0o600 {
+	tok := filepath.Join(Dir(), "actuation.token")
+	if !strings.HasPrefix(tok, home) {
+		t.Fatalf("config folder %s is outside the test's %s", Dir(), home)
+	}
+	if st, err := os.Stat(tok); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Errorf("actuation.token: %v %v", st, err)
 	}
 	if f.bearers["/authsec/provisioning/instructions"] != f.offered || f.bearers["/authsec/discovery/agentkit/machine/events"] != f.offered {
